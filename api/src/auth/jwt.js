@@ -8,7 +8,7 @@ export function createJwt({ secret, issuer = 'block6-api', audience = 'block6-sp
   async function sign(user) {
     if (!/^[1-9][0-9]*$/.test(String(user?.id))) throw new Error('Invalid JWT subject');
     const iat = Math.floor(now() / 1000);
-    return new SignJWT({ role: user.role }).setProtectedHeader({ alg: 'HS256', typ: 'JWT' })
+    return new SignJWT({ role: user.role, mfaVersion: user.mfa_version || 0 }).setProtectedHeader({ alg: 'HS256', typ: 'JWT' })
       .setSubject(String(user.id)).setIssuer(issuer).setAudience(audience).setIssuedAt(iat).setExpirationTime(iat + ttlSeconds).sign(key);
   }
   async function verified(token) {

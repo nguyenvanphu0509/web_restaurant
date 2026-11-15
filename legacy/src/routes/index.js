@@ -4,7 +4,7 @@ import { createDishController } from '../controllers/dishes.js';
 import { createAdminController, resources } from '../controllers/admin.js';
 import multer from 'multer';
 
-export function createRoutes(db, preview, csrf) {
+export function createRoutes(db, preview, csrf, auth) {
   const router = Router();
   const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
   router.get('/', createHomeController(db));
@@ -16,7 +16,7 @@ export function createRoutes(db, preview, csrf) {
   router.get('/dishes/:id', dishes.show);
   router.get('/admin', (req, res) => res.redirect('/admin/dishes'));
   for (const resource of Object.keys(resources)) {
-    const admin = Router(), controller = createAdminController(db, resource, preview);
+    const admin = Router(), controller = createAdminController(db, resource, preview, auth);
     admin.get('/', controller.index);
     admin.get('/new', controller.new);
     admin.post('/', ['dishes', 'restaurants'].includes(resource) ? upload.single('imageFile') : (req, res, next) => next(), csrf, controller.create);

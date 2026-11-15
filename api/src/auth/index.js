@@ -1,3 +1,4 @@
+import { createMfa, MfaError } from '../../../shared/server/auth/mfa.js';
 import { createLimits, loginNeedsCaptcha } from '../../../shared/server/auth/limits.js';
 import { Router } from 'express';
 import { createJwt } from './jwt.js';
@@ -6,7 +7,7 @@ import { createMailSender, createMailTasks } from './mail.js';
 import { createActivationDelivery } from './activation.js';
 import { createRecaptchaVerifier, RecaptchaUnavailableError } from './recaptcha.js';
 
-export function createAuth({ pool, mailer, secret, challengeSecret = secret, schema = 'block8_auth', siteOrigin = 'http://localhost:5173', from, logger = console, recaptchaVerifier = createRecaptchaVerifier(), jwt = createJwt({ secret }) } = {}) {
+export function createAuth({ pool, mailer, secret, challengeSecret = secret, schema = 'block8_auth', siteOrigin = 'http://localhost:5173', from, logger = console, recaptchaVerifier = createRecaptchaVerifier(), jwt = createJwt({ secret }), mfaEncryptionKey = process.env.MFA_ENCRYPTION_KEY } = {}) {
   if (!pool || !mailer || !/^[a-z][a-z0-9_]*$/.test(schema)) throw new Error('Invalid API auth configuration');
   if (typeof challengeSecret !== 'string' || Buffer.byteLength(challengeSecret) < 32) throw new Error('Auth challenge secret must contain at least 32 bytes');
   siteOrigin = new URL(siteOrigin).origin;
@@ -21,6 +22,7 @@ export function createAuth({ pool, mailer, secret, challengeSecret = secret, sch
     } catch (error) { await client.query('ROLLBACK'); throw error; }
     finally { client.release(); }
   }
+  const mfa = createMfa({ transaction: tx, encryptionKey: mfaEncryptionKey, issuer: 'Ẩm thực Việt SPA' });
   const mac = createMac(challengeSecret);
   const send = createMailSender(mailer, { from, logger });
   const mailTasks = createMailTasks(logger);
@@ -70,16 +72,37 @@ export function createAuth({ pool, mailer, secret, challengeSecret = secret, sch
     if (req.method === 'POST' && (!req.is('application/json') || !req.body || Array.isArray(req.body) || typeof req.body !== 'object')) return fail(res, 200, 'INVALID_REQUEST', 'Cần gửi dữ liệu JSON hợp lệ.');
     next();
   });
-  const publicUser = user => ({ id: user.id, email: user.email, name: user.name, role: user.role });
+  const publicUser = user => ({ id: user.id, email: user.email, name: user.name, role: user.role, mfaEnabled: !!user.mfa_enabled });
   async function loadUser(req, res, next) {
     try {
-      const user = (await q('SELECT id,email,name,role,status,email_verified_at FROM block8_auth.users WHERE id=$1', [Number(req.auth.sub)])).rows[0];
-      if (!user || user.status !== 'active' || !user.email_verified_at) return fail(res, 401, 'UNAUTHENTICATED', 'Tài khoản không còn hoạt động. Vui lòng đăng nhập lại.');
+      const user = (await q('SELECT id,email,name,role,status,email_verified_at,mfa_enabled,mfa_version FROM block8_auth.users WHERE id=$1', [Number(req.auth.sub)])).rows[0];
+      if (!user || user.status !== 'active' || !user.email_verified_at || (req.auth.mfaVersion ?? 0) !== (user.mfa_version || 0)) return fail(res, 401, 'UNAUTHENTICATED', 'Tài khoản không còn hoạt động. Vui lòng đăng nhập lại.');
       req.user = publicUser(user); return next();
     } catch (error) { return next(error); }
   }
   const requireAuth = (req, res, next) => jwt.requireAuth(req, res, () => loadUser(req, res, next));
   router.get('/me', requireAuth, (req, res) => ok(res, req.user));
+  const mfaRoute = work => async (req, res, next) => {
+    try { return await work(req, res); }
+    catch (error) {
+      if (!(error instanceof MfaError)) return next(error);
+      if (error.status === 429) res.set('Retry-After', '900');
+      return fail(res, error.status, error.code, error.message);
+    }
+  };
+  const mfaSession = async user => ({ accessToken: await jwt.sign(user), expiresIn: jwt.ttlSeconds, user: publicUser(user) });
+  router.get('/mfa', requireAuth, mfaRoute(async (req, res) => ok(res, await mfa.status(req.user.id))));
+  router.post('/mfa', mfaRoute(async (req, res) => ok(res, await mfaSession(await mfa.finish(req.body.challenge, req.body)))));
+  router.post('/mfa/setup', requireAuth, mfaRoute(async (req, res) => ok(res, await mfa.setup(req.user.id, req.body))));
+  router.post('/mfa/cancel', requireAuth, mfaRoute(async (req, res) => ok(res, await mfa.cancel(req.user.id))));
+  router.post('/mfa/confirm', requireAuth, mfaRoute(async (req, res) => {
+    const result = await mfa.confirm(req.user.id, req.body);
+    return ok(res, { ...await mfaSession(result.user), recoveryCodes: result.recoveryCodes });
+  }));
+  for (const [path, action] of [['disable', 'disable'], ['recovery/regenerate', 'regenerate']]) router.post(`/mfa/${path}`, requireAuth, mfaRoute(async (req, res) => {
+    const result = await mfa.change(req.user.id, action, req.body);
+    return ok(res, { ...await mfaSession(result.user), ...(result.recoveryCodes && { recoveryCodes: result.recoveryCodes }) });
+  }));
   router.post('/register', async (req, res) => {
     const identity = email(req.body.email);
     if (!validEmail(identity)) return fail(res, 200, 'VALIDATION_FAILED', 'Email không hợp lệ.', { fields: { email: 'Email không hợp lệ.' } });
@@ -141,6 +164,7 @@ export function createAuth({ pool, mailer, secret, challengeSecret = secret, sch
       return fail(res, 200, 'INVALID_CREDENTIALS', 'Email hoặc mật khẩu không đúng.', { captchaRequired: loginNeedsCaptcha(x, y) });
     }
     if (user.status !== 'active' || !user.email_verified_at) return fail(res, 200, 'ACCOUNT_NOT_ACTIVATED', 'Tài khoản chưa được kích hoạt. Vui lòng xác minh email.');
+    if (user.mfa_enabled) return ok(res, await mfa.challenge(user));
     ok(res, { accessToken: await jwt.sign(user), expiresIn: jwt.ttlSeconds, user: publicUser(user) });
   });
   router.post('/forgot', async (req, res) => {
@@ -181,5 +205,5 @@ export function createAuth({ pool, mailer, secret, challengeSecret = secret, sch
     mailTasks.afterResponse(res, () => send(recipient, 'Mật khẩu đã được thay đổi', `Mật khẩu của bạn đã được thay đổi. Nếu bạn không thực hiện, hãy yêu cầu đặt lại tại ${siteOrigin}/forgot.`));
     ok(res, { changed: true });
   });
-  return { router, requireAuth, jwt, pool, drainMail: () => mailTasks.drain() };
+  return { router, requireAuth, jwt, mfa, pool, drainMail: () => mailTasks.drain() };
 }

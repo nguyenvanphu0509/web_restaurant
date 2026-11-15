@@ -1,3 +1,4 @@
+import { canManage } from './auth/policy.js';
 import {createAuth} from './auth/index.js';
 import express from 'express';
 import methodOverride from 'method-override';
@@ -14,7 +15,7 @@ export function createApp({ db, preview = false, origin = 'http://localhost:3001
   app.set('view engine', 'ejs');
   app.set('views', fileURLToPath(new URL('./views/', import.meta.url)));
   app.set('query parser', 'extended');
-  app.locals = { ...app.locals, money, restaurantPrice, dateLabel, dishImage, restaurantPhoto, preview };
+  app.locals = { ...app.locals, canManage, money, restaurantPrice, dateLabel, dishImage, restaurantPhoto, preview };
   // Error pages also need locals when parsing/security rejects before routing.
   app.use((req, res, next) => { res.locals.currentPath = req.path; res.locals.user = null; res.locals.csrf = ""; next(); });
   app.use(securityHeaders);
@@ -30,7 +31,7 @@ export function createApp({ db, preview = false, origin = 'http://localhost:3001
   app.use(auth.router);
   app.use(checkOrigin(origin));
   app.use((req,res,next)=>req.is('multipart/form-data') ? next() : auth.csrf(req,res,next));
-  app.use(createRoutes(db, preview, auth.csrf));
+  app.use(createRoutes(db, preview, auth.csrf, auth));
   app.use((req, res) => res.status(404).render('errors/index', { title: 'Không tìm thấy', status: 404, message: 'Trang bạn tìm không tồn tại.' }));
   app.use((err, req, res, next) => {
     if (res.headersSent) return next(err);

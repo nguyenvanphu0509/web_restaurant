@@ -1,3 +1,5 @@
+import { createMfa, MfaError } from '../../../shared/server/auth/mfa.js';
+import { canManage } from './policy.js';
 import { createLimits, loginNeedsCaptcha } from '../../../shared/server/auth/limits.js';
 import {createMailSender,createMailTasks} from './mail.js';
 import {createActivationDelivery} from './activation.js';
@@ -12,7 +14,7 @@ import {createRecaptchaVerifier,RecaptchaUnavailableError} from './recaptcha.js'
 import {email,token,digest,mac,validPassword,hashPassword,verify} from './crypto.js';
 const Store=connectPg(session);
 const dummyHash=hashPassword('dummy-password-for-timing');
-export function createAuth({schema='block8_auth',siteOrigin=origin,sessionStore,mailLogger=console,recaptchaVerifier=createRecaptchaVerifier(),pool=new pg.Pool({connectionString:process.env.SSR_DATABASE_URL||process.env.DATABASE_URL}),mailer=nodemailer.createTransport({host:process.env.SMTP_HOST,port:Number(process.env.SMTP_PORT||587),secure:process.env.SMTP_PORT==='465',requireTLS:true,connectionTimeout:10000,greetingTimeout:10000,socketTimeout:15000,auth:{user:process.env.SMTP_USER,pass:process.env.SMTP_PASSWORD}})}={}){
+export function createAuth({mfaEncryptionKey=process.env.MFA_ENCRYPTION_KEY,schema='block8_auth',siteOrigin=origin,sessionStore,mailLogger=console,recaptchaVerifier=createRecaptchaVerifier(),pool=new pg.Pool({connectionString:process.env.SSR_DATABASE_URL||process.env.DATABASE_URL}),mailer=nodemailer.createTransport({host:process.env.SMTP_HOST,port:Number(process.env.SMTP_PORT||587),secure:process.env.SMTP_PORT==='465',requireTLS:true,connectionTimeout:10000,greetingTimeout:10000,socketTimeout:15000,auth:{user:process.env.SMTP_USER,pass:process.env.SMTP_PASSWORD}})}={}){
  siteOrigin = new URL(siteOrigin).origin;
  if(!/^[a-z][a-z0-9_]*$/.test(schema))throw new Error('Invalid auth schema');
  const sql=s=>s.replaceAll('block8_auth.',schema+'.');
@@ -20,6 +22,7 @@ export function createAuth({schema='block8_auth',siteOrigin=origin,sessionStore,
  const middleware=session({name:'sid',secret:secret(),store:sessionStore || new Store({pool,schemaName:schema,tableName:'session',createTableIfMissing:false,disableTouch:true}),resave:false,saveUninitialized:false,cookie:{httpOnly:true,sameSite:'lax',secure:siteOrigin.startsWith('https:'),maxAge:8*3600000}});
  const router=Router();
  async function tx(fn){const c=await pool.connect();try{await c.query('BEGIN');const v=await fn({query:(s,p)=>c.query(sql(s),p)});await c.query('COMMIT');return v;}catch(e){await c.query('ROLLBACK');throw e;}finally{c.release();}}
+ const mfa=createMfa({transaction:tx,encryptionKey:mfaEncryptionKey,issuer:'Ẩm thực Việt SSR'});
  const {count}=createLimits(q);
  async function quota(req,purpose,e,a,b){const x=await count(`${purpose}:email:${e}`,true),y=await count(`${purpose}:ip:${req.ip}`,true);return x>a||y>b;}
  const send=createMailSender(mailer,{from:process.env.SMTP_FROM,logger:mailLogger});
@@ -38,7 +41,7 @@ export function createAuth({schema='block8_auth',siteOrigin=origin,sessionStore,
  function form(req,res,mode,message='',status=200,extra={}){res.status(status).render('auth/index',{title:'Tài khoản',mode,message,email:email(req.body?.email||req.query.email||(mode==='login'?req.session.loginEmail:req.session.activationEmail)),resendUntil:req.session.activationResendUntil||0,redirect:typeof req.query.redirect==='string'?req.query.redirect:'',resetAvailable:true,recaptchaSiteKey,captchaRequired:mode==='register'||(mode==='login'&&Boolean(res.locals.loginNeedsCaptcha)),...extra});}
  const limited=(req,res,mode)=>form(req,res,mode,'Quá nhiều yêu cầu. Vui lòng thử lại sau.',429);
  async function captcha(req){try{return await recaptchaVerifier(String(req.body['g-recaptcha-response']||''),req.ip);}catch(error){if(error instanceof RecaptchaUnavailableError)return 'unavailable';throw error;}}
- router.use(async(req,res,next)=>{if(req.session.absoluteExpiry && Date.now()>=req.session.absoluteExpiry){delete req.session.userId;} if(req.path==='/reset')res.set('Referrer-Policy','no-referrer');res.set('Cache-Control','no-store');req.session.csrf ||=token();res.locals.csrf=req.session.csrf;res.locals.user=null;if(req.session.userId){const u=(await q('SELECT id,email,name,status,version FROM block8_auth.users WHERE id=$1',[req.session.userId])).rows[0];if(u?.status==='active'&&u.version===req.session.version)res.locals.user=u;else delete req.session.userId;}next();});
+ router.use(async(req,res,next)=>{if(req.session.absoluteExpiry && Date.now()>=req.session.absoluteExpiry){delete req.session.userId;} if(req.path==='/reset')res.set('Referrer-Policy','no-referrer');res.set('Cache-Control','no-store');req.session.csrf ||=token();res.locals.csrf=req.session.csrf;res.locals.user=null;res.locals.canManage=canManage;if(req.session.userId){const u=(await q('SELECT * FROM block8_auth.users WHERE id=$1',[req.session.userId])).rows[0];if(u?.status==='active'&&u.version===req.session.version&&(req.session.mfaVersion??0)===(u.mfa_version||0))res.locals.user=u;else delete req.session.userId;}if(req.session.mfaPending&&!['/mfa','/logout'].includes(req.path))return res.redirect(303,'/mfa');next();});
  function csrf(req,res,next){if(['GET','HEAD','OPTIONS'].includes(req.method))return next();if(req.body?._csrf!==req.session.csrf)return res.status(403).render('errors/index',{title:'Lỗi 403',status:403,message:'Biểu mẫu không hợp lệ. Vui lòng tải lại trang.'});next();}
  const requireAuth=(req,res,next)=>res.locals.user?next():res.redirect(303,'/login');
  router.use(['/admin','/dishes','/restaurants','/api/restaurants'],requireAuth);
@@ -74,6 +77,42 @@ export function createAuth({schema='block8_auth',siteOrigin=origin,sessionStore,
      title:'Lỗi 403',status:403,message:'Nguồn gửi biểu mẫu không hợp lệ. Vui lòng mở lại trang từ website.'
    });
  });
+ const save=req=>new Promise((resolve,reject)=>req.session.save(err=>err?reject(err):resolve()));
+ const safeTarget=value=>/^\/(dishes|restaurants|admin)(\/|\?|$)/.test(value)&&!value.includes('\\')?value:'/dishes';
+ async function establish(req,user,remember=false){
+ await new Promise((resolve,reject)=>req.session.regenerate(err=>err?reject(err):resolve()));
+ req.session.userId=user.id;req.session.version=user.version;req.session.mfaVersion=user.mfa_version||0;req.session.csrf=token();
+ req.session.cookie.maxAge=remember?7*86400000:8*3600000;req.session.absoluteExpiry=Date.now()+req.session.cookie.maxAge;await save(req);
+ }
+ const security=async(req,res,extra={})=>res.render('auth/security',{title:'Bảo mật tài khoản',status:await mfa.status(res.locals.user.id),setup:null,recoveryCodes:null,message:'',...extra,csrf:req.session.csrf});
+ const mfaPage=(req,res,message='')=>res.render('auth/mfa',{title:'Xác thực hai bước',message,csrf:req.session.csrf});
+ const protectMfa=fn=>async(req,res,next)=>{try{await fn(req,res);}catch(error){if(!(error instanceof MfaError))return next(error);res.status(error.status===429?429:error.status>=500?error.status:400);if(req.path==='/mfa')return mfaPage(req,res,error.message);return security(req,res,{message:error.message});}};
+ router.get('/mfa',(req,res)=>{
+ if(!req.session.mfaPending||req.session.mfaPending.expires<=Date.now()){delete req.session.mfaPending;return res.redirect(303,'/login');}
+ return mfaPage(req,res);
+ });
+ router.post('/mfa',csrf,protectMfa(async(req,res)=>{
+ const pending=req.session.mfaPending;
+ if(!pending||pending.expires<=Date.now()){delete req.session.mfaPending;return res.redirect(303,'/login');}
+ try{const user=await mfa.finish(pending.challenge,req.body);await establish(req,user,pending.remember);return res.redirect(303,safeTarget(pending.target));}
+ catch(error){if(error.code==='INVALID_MFA_CHALLENGE'){delete req.session.mfaPending;await save(req);return res.redirect(303,'/login');}throw error;}
+ }));
+ router.get('/account/security',requireAuth,protectMfa((req,res)=>security(req,res)));
+ router.post('/account/mfa/setup',requireAuth,csrf,protectMfa(async(req,res)=>security(req,res,{setup:await mfa.setup(res.locals.user.id,req.body)})));
+ router.post('/account/mfa/cancel',requireAuth,csrf,protectMfa(async(req,res)=>{await mfa.cancel(res.locals.user.id);return security(req,res,{message:'Đã hủy thiết lập.'});}));
+ router.post('/account/mfa/confirm',requireAuth,csrf,protectMfa(async(req,res)=>{
+ const result=await mfa.confirm(res.locals.user.id,req.body);await establish(req,result.user);res.locals.user=result.user;
+ return security(req,res,{recoveryCodes:result.recoveryCodes,message:'Đã bật MFA. Hãy lưu các mã dự phòng ở nơi riêng.'});
+ }));
+ for(const [path,action]of [['disable','disable'],['recovery/regenerate','regenerate']])router.post(`/account/mfa/${path}`,requireAuth,csrf,protectMfa(async(req,res)=>{
+ const result=await mfa.change(res.locals.user.id,action,req.body);await establish(req,result.user);res.locals.user=result.user;
+ return security(req,res,{recoveryCodes:result.recoveryCodes||null,message:action==='disable'?'Đã tắt MFA.':'Đã tạo bộ mã dự phòng mới; bộ cũ không còn hiệu lực.'});
+ }));
+ async function withUserLock(req,work){return tx(async client=>{
+ const user=(await client.query('SELECT * FROM block8_auth.users WHERE id=$1 FOR UPDATE',[req.session.userId])).rows[0];
+ if(!user||user.status!=='active'||user.version!==req.session.version||(user.mfa_version||0)!==(req.session.mfaVersion||0))throw Object.assign(new Error('Phiên hoặc quyền đã thay đổi.'),{status:403});
+ return work(user);
+ });}
  router.post('/register',csrf,async(req,res)=>{const e=email(req.body.email);
  if(typeof req.body.confirmPassword!=='string'||req.body.confirmPassword!==req.body.password)return form(req,res,'register','Mật khẩu nhập lại không khớp. Vui lòng kiểm tra lại.',400);
  if(await quota(req,'register',e,3,10))return limited(req,res,'register');const captchaResult=await captcha(req);if(captchaResult==='unavailable')return form(req,res,'register','Dịch vụ CAPTCHA tạm thời không khả dụng. Vui lòng thử lại sau.',503);if(!captchaResult)return form(req,res,'register','Vui lòng xác nhận reCAPTCHA.',400);if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)||!validPassword(req.body.password))return form(req,res,'register','Email hợp lệ; mật khẩu cần 15–128 ký tự.',400);
@@ -95,7 +134,14 @@ export function createAuth({schema='block8_auth',siteOrigin=origin,sessionStore,
  }form(req,res,'activate','Mã không hợp lệ, đã hết hạn hoặc đã được sử dụng.',400);});
  router.post('/login',csrf,async(req,res)=>{const e=email(req.body.email),ek=`login:email:${e}`,ik=`login:ip:${req.ip}`;req.session.loginEmail=e;const a=await count(ek),b=await count(ik);const needsCaptcha=loginNeedsCaptcha(a,b);res.locals.loginNeedsCaptcha=needsCaptcha;if(a>=10||b>=50)return limited(req,res,'login');const captchaResult=needsCaptcha?await captcha(req):true;if(captchaResult==='unavailable')return form(req,res,'login','Dịch vụ CAPTCHA tạm thời không khả dụng. Vui lòng thử lại sau.',503);if(needsCaptcha&&!captchaResult)return form(req,res,'login','Vui lòng xác nhận reCAPTCHA.',400);const u=(await q('SELECT * FROM block8_auth.users WHERE email=$1',[e])).rows[0];const stored=u?.password_hash||await dummyHash;const correct=await verify(req.body.password,stored);
  if(!correct||u?.status!=='active'){const x=await count(ek,true),y=await count(ik,true);res.locals.loginNeedsCaptcha=loginNeedsCaptcha(x,y);if(x>=10||y>=50)await q("UPDATE block8_auth.limits SET locked_until=now()+interval '15 minutes' WHERE key=ANY($1)",[[...(x>=10?[ek]:[]),...(y>=50?[ik]:[])]]);if(x>=10||y>=50)return limited(req,res,'login');return form(req,res,'login','Thông tin đăng nhập không hợp lệ.',400);}
- await new Promise((resolve,reject)=>req.session.regenerate(e=>e?reject(e):resolve()));req.session.userId=u.id;req.session.version=u.version;req.session.csrf=token();req.session.cookie.maxAge=req.body.remember?7*86400000:8*3600000;req.session.absoluteExpiry=Date.now()+req.session.cookie.maxAge;await new Promise((resolve,reject)=>req.session.save(e=>e?reject(e):resolve()));const target=String(req.body.redirect||'');res.redirect(303,/^\/(dishes|restaurants|admin)(\/|\?|$)/.test(target)&&!target.includes('\\')?target:'/dishes');});
+ const target=String(req.body.redirect||'');
+ if(u.mfa_enabled){
+ const challenge=await mfa.challenge(u);
+ await new Promise((resolve,reject)=>req.session.regenerate(err=>err?reject(err):resolve()));
+ req.session.mfaPending={challenge:challenge.challenge,remember:!!req.body.remember,target,expires:Date.now()+300000};req.session.csrf=token();
+ await save(req);return res.redirect(303,'/mfa');
+ }
+ await establish(req,u,!!req.body.remember);return res.redirect(303,safeTarget(target));});
  router.post('/logout',csrf,(req,res,next)=>req.session.destroy(e=>{if(e)return next(e);res.clearCookie('sid',{path:'/'});res.redirect(303,'/login');}));
  router.post('/forgot',csrf,async(req,res)=>{
  const e=email(req.body.email);
@@ -121,5 +167,5 @@ export function createAuth({schema='block8_auth',siteOrigin=origin,sessionStore,
    mailTasks.afterResponse(res,()=>send(recipient,'Mật khẩu đã được thay đổi',`Mật khẩu tài khoản của bạn đã được thay đổi. Các phiên đăng nhập cũ đã kết thúc. Nếu bạn không thực hiện thay đổi này, hãy yêu cầu đặt lại mật khẩu tại ${siteOrigin}/forgot.`));
    return res.redirect(303,'/login');
  }form(req,res,'reset','Liên kết không hợp lệ, đã hết hạn hoặc đã được sử dụng.',400,{resetToken:'',resetAvailable:false});});
- return {middleware,router,csrf,requireAuth,pool,drainMail:()=>mailTasks.drain()};
+ return {middleware,router,csrf,requireAuth,pool,mfa,withUserLock,drainMail:()=>mailTasks.drain()};
 }

@@ -140,3 +140,5 @@ button:disabled { opacity: .55; cursor: wait; }
 .account-logout:hover { background: #FDEEE9; color: #E76F51; border-color: #E76F51; }
 @media (max-width: 800px) { .header-auth-group > .button { display: none; } }
 @media (max-width: 800px) { .header-auth-group > .button { display: none; } }
+.account-security-link { display: block; margin-bottom: 14px; font-size: 13px; color: #315c4d; }
+.mfa-secret { overflow-wrap: anywhere; }

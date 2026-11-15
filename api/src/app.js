@@ -1,3 +1,4 @@
+import { MfaError } from '../../shared/server/auth/mfa.js';
 import express from 'express';
 import multer from 'multer';
 import { fileURLToPath } from 'node:url';
@@ -140,6 +141,7 @@ export function createApi({ db, preview = false, origin = 'http://localhost:5173
   app.use((req, res) => res.status(404).json({ message: 'Không tìm thấy URL API.' }));
   app.use((error, req, res, next) => {
     if (res.headersSent) return next(error);
+    if (error instanceof MfaError) { if (error.status === 429) res.set('Retry-After', '900'); return res.status(error.status).json({ ok: false, error: { code: error.code, message: error.message } }); }
     if (error instanceof BusinessError || error.code === 'P2025') return res.json({ ok: false, error: { code: error.code === 'P2025' ? 'NOT_FOUND' : error.code, message: error.code === 'P2025' ? 'Bản ghi không tồn tại.' : error.message, ...(error.fields && { fields: error.fields }) } });
     if (error.code === 'P2003') return res.json({ ok: false, error: { code: 'VALIDATION_FAILED', message: 'Dữ liệu liên kết đã thay đổi. Tải lại và thử lại.', fields: { _form: 'Bản ghi liên kết không còn tồn tại.' } } });
     if (error.code === 'P2002') return res.json({ ok: false, error: { code: 'ALREADY_EXISTS', message: 'Giá trị duy nhất đã tồn tại.', fields: { michelinUrl: 'Hồ sơ nguồn này đã được sử dụng.' } } });

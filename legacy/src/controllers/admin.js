@@ -1,6 +1,7 @@
+import { assertManage, canManage } from '../auth/policy.js';
 import { imageChoices } from '../../../api/data/demo.js';
 import { parseId, validateRecord, HttpError } from '../validators/index.js';
-import { uploadImage, validateImageFile } from '../../../api/src/lib/storage.js';
+import { uploadImage, validateImageFile, deleteUploadedImage } from '../../../api/src/lib/storage.js';
 import { imageSources, isAllowedDishImage } from '../../../shared/image-sources.js';
 
 export const resources = {
@@ -9,7 +10,7 @@ export const resources = {
   chefs: { model: 'chef', label: 'Đầu bếp', singular: 'đầu bếp', icon: '♧', columns: [['name', 'Tên'], ['specialty', 'Chuyên môn']] },
   ingredients: { model: 'ingredient', label: 'Nguyên liệu', singular: 'nguyên liệu', icon: '✳', columns: [['name', 'Tên'], ['unit', 'Đơn vị']] },
 };
-export function createAdminController(db, resource, preview) {
+function buildController(db, resource, preview) {
   const config = resources[resource];
   const model = db[config.model], base = `/admin/${resource}`;
   const locals = { resource, config, resources, base, imageChoices, allowedImageOrigins: imageSources.split(' ').filter(source => source.startsWith('https:') && !source.includes('*')) };
@@ -87,7 +88,7 @@ export function createAdminController(db, resource, preview) {
       const message = typeof req.query.notice === 'string' && Object.hasOwn(messages, req.query.notice) ? messages[req.query.notice] : '';
       res.render('admin/index', { ...locals, title: `Quản lý ${config.singular}`, records, message });
     },
-    new(req, res) { return form(res, { available: true, priceIsDemo: true, recipeIsDemo: true }); },
+    new(req, res) { return form(res, { status: res.locals.user.role === 'editor' ? 'draft' : 'published', available: true, priceIsDemo: true, recipeIsDemo: true }); },
     async show(req, res) {
       const record = await getRecord(req);
       const messages = { created: 'Đã thêm bản ghi.', updated: 'Đã lưu thay đổi.' };
@@ -98,14 +99,21 @@ export function createAdminController(db, resource, preview) {
     async create(req, res) {
       assertWritable();
       const image = prepareImage(req);
-      const result = validateRecord(image.body, resource);
+      const body = { ...image.body };
+      if (resource === 'dishes' && res.locals.user.role === 'editor') { body.chefId = String(res.locals.user.chef_id); body.newChefName = ''; }
+      const result = validateRecord(body, resource);
+      if (resource === 'dishes') {
+        result.data.status = res.locals.user.role === 'editor' ? 'draft' : (body.status || 'published');
+        result.values.status = result.data.status;
+        if (!['draft', 'published'].includes(result.data.status)) { result.errors.status = 'Trạng thái không hợp lệ.'; result.valid = false; }
+      }
       result.values.imageMode = req.body.imageMode === 'file' ? 'file' : 'url';
       Object.assign(result.errors, image.errors);
       result.valid = !Object.keys(result.errors).length;
       if (result.valid) await createNewRelations(result);
       if (result.valid) await relationData(result);
       if (!result.valid) return form(res, result.values, result.errors, null, 400);
-      if (image.file) { result.data.imagePath = await uploadImage(image.file); result.data.photoType = 'Ảnh minh họa'; }
+      if (image.file) { result.data.imagePath = await uploadImage(image.file); req.block9UploadedImage = result.data.imagePath; result.data.photoType = 'Ảnh minh họa'; }
       const record = await model.create({ data: result.data });
       res.redirect(303, `${base}/${record.id}?notice=created`);
     },
@@ -113,14 +121,21 @@ export function createAdminController(db, resource, preview) {
       assertWritable();
       const record = await getRecord(req);
       const image = prepareImage(req, record.imagePath);
-      const result = validateRecord(image.body, resource);
+      const body = { ...image.body };
+      if (resource === 'dishes' && res.locals.user.role === 'editor') { body.chefId = String(res.locals.user.chef_id); body.newChefName = ''; }
+      const result = validateRecord(body, resource);
+      if (resource === 'dishes') {
+        result.data.status = res.locals.user.role === 'editor' ? 'draft' : (body.status || 'published');
+        result.values.status = result.data.status;
+        if (!['draft', 'published'].includes(result.data.status)) { result.errors.status = 'Trạng thái không hợp lệ.'; result.valid = false; }
+      }
       result.values.imageMode = req.body.imageMode === 'file' ? 'file' : 'url';
       Object.assign(result.errors, image.errors);
       result.valid = !Object.keys(result.errors).length;
       if (result.valid) await createNewRelations(result);
       if (result.valid) await relationData(result, true);
       if (!result.valid) return form(res, result.values, result.errors, record.id, 400);
-      if (image.file) { result.data.imagePath = await uploadImage(image.file); result.data.photoType = 'Ảnh minh họa'; }
+      if (image.file) { result.data.imagePath = await uploadImage(image.file); req.block9UploadedImage = result.data.imagePath; result.data.photoType = 'Ảnh minh họa'; }
       await model.update({ where: { id: record.id }, data: result.data });
       res.redirect(303, `${base}/${record.id}?notice=updated`);
     },
@@ -133,4 +148,34 @@ export function createAdminController(db, resource, preview) {
       res.redirect(303, `${base}?notice=deleted`);
     },
   };
+}
+
+export function createAdminController(db, resource, preview, auth) {
+  const base = buildController(db, resource, preview), handlers = {};
+  const actions = { index: 'read', show: 'read', new: 'create', edit: 'update', confirmDelete: 'delete', create: 'create', update: 'update', destroy: 'delete' };
+  for (const [name, action] of Object.entries(actions)) handlers[name] = async (req, res) => {
+    const write = ['create', 'update', 'destroy'].includes(name);
+    const record = ['edit', 'confirmDelete', 'update', 'destroy'].includes(name) ? await db[resources[resource].model].findUnique({ where: { id: parseId(req.params.id) } }) : null;
+    assertManage(res.locals.user, action, resource, record);
+    if (!write) return base[name](req, res);
+    if (preview) throw new HttpError(503, 'Preview chỉ đọc. Không thể lưu dữ liệu.');
+    if (!auth?.withUserLock) throw new HttpError(503, 'Dịch vụ phân quyền chưa sẵn sàng.');
+    let output;
+    const response = new Proxy(res, { get(target, prop) {
+      if (prop === 'redirect' || prop === 'render') return (...args) => { output = () => target[prop](...args); return response; };
+      if (prop === 'status') return status => { target.status(status); return response; };
+      const value = target[prop]; return typeof value === 'function' ? value.bind(target) : value;
+    } });
+    await auth.withUserLock(req, async user => db.$transaction(async tx => {
+      if (record && tx.$queryRawUnsafe) await tx.$queryRawUnsafe(`SELECT id FROM public."${resource}" WHERE id=$1 FOR UPDATE`, record.id);
+      const fresh = record ? await tx[resources[resource].model].findUnique({ where: { id: record.id } }) : null;
+      assertManage(user, action, resource, fresh);
+      response.locals.user = user;
+      await buildController(tx, resource, preview)[name](req, response);
+      // Validation errors must roll back any inline relation creation.
+      if (res.statusCode >= 400) throw Object.assign(new Error('Invalid form'), { formOutput: true });
+    })).catch(async error => { if (req.block9UploadedImage) { try { await deleteUploadedImage(req.block9UploadedImage); } catch {} } if (!error.formOutput) throw error; });
+    return output?.();
+  };
+  return handlers;
 }

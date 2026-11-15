@@ -15,6 +15,7 @@ model Dish {
   recipeIsDemo Boolean @default(false)
   category    String?
   available   Boolean  @default(true)
+  status      String   @default("published")
   imagePath   String?
   priceSymbol String?
   priceLabel  String?

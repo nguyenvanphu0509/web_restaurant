@@ -1,0 +1,31 @@
+import { chromium } from '@playwright/test';
+import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import { newDb } from 'pg-mem';
+import * as OTPAuth from 'otpauth';
+import {createAuth} from '../../api/src/auth/index.js';
+import {createApi} from '../../api/src/app.js';
+import {hashPassword} from '../../shared/server/auth/crypto.js';
+import {createFixture} from '../../tests/fixtures.js';
+const {Pool}=newDb().adapters.createPg(),pool=new Pool();
+await pool.query(await readFile(new URL('../../api/migrations/001-auth.sql',import.meta.url),'utf8'));
+await pool.query("INSERT INTO block8_auth.users(email,name,password_hash,status,email_verified_at) VALUES('phone@example.test','Phone Test',$1,'active',now())",[await hashPassword('test-password-long-123')]);
+const auth=createAuth({pool,secret:'test-jwt-secret-at-least-thirty-two-bytes',mfaEncryptionKey:Buffer.alloc(32,7).toString('base64'),mailer:{sendMail:async()=>({accepted:['test']})},recaptchaVerifier:async()=>true});
+const app=createApi({db:createFixture().db,auth,origin:'http://localhost:5179'});
+const server=await new Promise(resolve=>{const s=app.listen(3189,'localhost',()=>resolve(s));});
+let browser;
+try{
+ browser=await chromium.launch({channel:'chrome',headless:true});const page=await browser.newPage();const errors=[];page.on('pageerror',e=>errors.push(e.message));
+ await page.goto('http://localhost:5179/login');await page.locator('#login-identity').fill('phone@example.test');await page.locator('#login-pass').fill('test-password-long-123');await page.getByRole('button',{name:'Đăng nhập',exact:true}).click();await page.waitForURL('**/dishes');
+ await page.goto('http://localhost:5179/account/security');await page.getByLabel('Mật khẩu',{exact:true}).fill('test-password-long-123');await page.getByRole('button',{name:'Bắt đầu thiết lập',exact:true}).click();
+ await page.getByAltText('QR thiết lập Authenticator').waitFor();const secret=await page.locator('code.mfa-secret').textContent();assert.ok(secret);
+ const token=new OTPAuth.TOTP({secret}).generate();await page.getByLabel('Mã xác nhận',{exact:true}).fill(token);await page.getByRole('button',{name:'Xác nhận bật MFA',exact:true}).click();
+ const codes=page.getByRole('region',{name:'Mã dự phòng'}).locator('code');await codes.first().waitFor();assert.equal(await codes.count(),10);const recovery=await codes.first().textContent();
+ await page.reload();await page.getByText('Đã bật',{exact:true}).waitFor();assert.equal(await page.locator('code.mfa-secret').count(),0);assert.equal(await page.getByRole('region',{name:'Mã dự phòng'}).count(),0);
+ await page.getByRole('button',{name:/Tài khoản của/}).click();await page.getByRole('button',{name:'Đăng xuất',exact:true}).click();await page.waitForURL('**/login?redirect=*');
+ await page.locator('#login-identity').fill('phone@example.test');await page.locator('#login-pass').fill('test-password-long-123');await page.getByRole('button',{name:'Đăng nhập',exact:true}).click();await page.getByText('Xác Thực Hai Bước',{exact:true}).waitFor();
+ assert.equal(await page.evaluate(()=>localStorage.getItem('viet_cuisine_session')),null);
+ await page.getByRole('button',{name:'Dùng mã dự phòng',exact:true}).click();await page.getByLabel('Mã dự phòng',{exact:true}).fill(recovery);await page.getByRole('button',{name:'Tiếp tục',exact:true}).click();await page.waitForURL('**/account/security');
+ await page.getByLabel('Mật khẩu',{exact:true}).fill('test-password-long-123');await page.getByRole('button',{name:'Dùng mã dự phòng',exact:true}).click();await page.getByLabel('Mã dự phòng',{exact:true}).fill(recovery);await page.getByRole('button',{name:'Tắt MFA',exact:true}).click();await page.getByRole('alert').waitFor();
+ assert.deepEqual(errors,[]);console.log('Browser MFA passed: QR, confirmation, one-time recovery display, login challenge, recovery login, replay denial.');
+}finally{await browser?.close();await auth.drainMail();await new Promise(r=>server.close(r));await pool.end();}

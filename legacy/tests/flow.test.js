@@ -187,7 +187,7 @@ test('main safeguards: private email work, reset links, OTP purpose and multipar
  }}});
  const fixture=createFixture();const agent=request.agent(createApp({db:fixture.db,auth}));
  const password='main-safeguards-password-123';
- const user=(await pool.query("INSERT INTO block8_auth.users(email,password_hash,status) VALUES('main@example.invalid',$1,'active') RETURNING id",[await hashPassword(password)])).rows[0];
+ const user=(await pool.query("INSERT INTO block8_auth.users(email,password_hash,status,role) VALUES('main@example.invalid',$1,'active','admin') RETURNING id",[await hashPassword(password)])).rows[0];
  const csrfFrom=res=>res.text.match(/name="_csrf" value="([^"]+)"/)[1];
  let csrf=csrfFrom(await agent.get('/forgot'));
  const post=(path,data={})=>agent.post(path).type('form').send({_csrf:csrf,...data});

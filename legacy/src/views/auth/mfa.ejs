@@ -1,0 +1,6 @@
+<%- include('../partials/head') %>
+<main id="main" class="shell page-main"><section class="form-card"><h1>Xác thực hai bước</h1><p>Nhập mã 6 số trong ứng dụng Authenticator hoặc một mã dự phòng. Đây không phải OTP gửi qua email.</p>
+<% if(message){ %><p role="alert"><%= message %></p><% } %>
+<form method="POST" action="/mfa"><input type="hidden" name="_csrf" value="<%= csrf %>"><label class="field">Mã Authenticator<input name="otp" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code"></label><details><summary>Dùng mã dự phòng</summary><label class="field">Mã dự phòng (để trống mã Authenticator)<input name="recoveryCode" autocomplete="off" maxlength="64"></label></details><button class="button" type="submit">Xác nhận đăng nhập</button></form>
+<form method="POST" action="/logout"><input type="hidden" name="_csrf" value="<%= csrf %>"><button class="button outline" type="submit">Hủy đăng nhập</button></form>
+<p>Nếu mã bị từ chối, hãy bật ngày giờ tự động trên điện thoại hoặc chờ mã mới.</p></section></main><%- include('../partials/footer') %>

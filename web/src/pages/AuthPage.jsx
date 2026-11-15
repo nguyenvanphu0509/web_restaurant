@@ -40,8 +40,11 @@ const SLIDES = [
 export function AuthPage({ initialMode = 'login' }) {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  const { login, register, logout } = useAuth();
+  const { login, register, logout, finishMfa } = useAuth();
 
+  const [challenge, setChallenge] = useState(null);
+  const [useRecovery, setUseRecovery] = useState(false);
+  const [recoveryCode, setRecoveryCode] = useState('');
   const [mode, setMode] = useState(initialMode); // 'login' or 'signup'
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState(searchParams.get('email') || '');
@@ -106,8 +109,12 @@ export function AuthPage({ initialMode = 'login' }) {
         setResendUntil(Date.now() + 60000);
         setSuccessMsg('Yêu cầu gửi lại OTP đã được xử lý. Hãy kiểm tra cả thư rác.');
       } else if (mode === 'login') {
-        await login({ email: normalizedEmail, password, remember: rememberMe, captchaToken });
+        const result = await login({ email: normalizedEmail, password, remember: rememberMe, captchaToken });
+        if (result.next === 'mfa') { setChallenge(result.challenge); setPassword(''); setOtp(''); setMode('mfa'); return; }
         navigate(redirectPath, { replace: true });
+      } else if (mode === 'mfa') {
+        await finishMfa({ challenge, ...(useRecovery ? { recoveryCode } : { otp }), remember: rememberMe });
+        setChallenge(null); navigate(redirectPath, { replace: true });
       } else if (mode === 'signup-confirm') {
         await register({ name: username.trim(), email: normalizedEmail, password, confirmPassword, captcha: captchaToken });
         setPassword(''); setConfirmPassword(''); setMode('activate');
@@ -126,6 +133,7 @@ export function AuthPage({ initialMode = 'login' }) {
       }
     } catch (err) {
       setError(err.message || 'Có lỗi xảy ra. Vui lòng thử lại.');
+      if (err.code === 'INVALID_MFA_CHALLENGE') { setChallenge(null); setMode('login'); }
       if (err.code === 'ACCOUNT_NOT_ACTIVATED') setMode('activate');
       if (err.captchaRequired || err.code === 'CAPTCHA_REQUIRED') setCaptchaRequired(true);
       if (err.retryAfter && mode === 'activate') setResendUntil(Date.now() + err.retryAfter * 1000);
@@ -136,6 +144,7 @@ export function AuthPage({ initialMode = 'login' }) {
 
   const handleTabSwitch = (newMode) => {
     if (busy.current) return;
+    setChallenge(null); setRecoveryCode(''); setUseRecovery(false);
     setMode(newMode); setError(''); setSuccessMsg(''); setPassword(''); setConfirmPassword('');
     setCaptchaToken(''); setCaptchaRequired(false); setCaptchaRevision(value => value + 1);
   };
@@ -183,9 +192,11 @@ export function AuthPage({ initialMode = 'login' }) {
           {/* Form ĐĂNG NHẬP (Layout đồng bộ với Sign Up) */}
           {!['login', 'signup'].includes(mode) ? (
             <div className="auth-form-section">
-              <h2 className="auth-form-title">{{ 'signup-confirm': 'Xác Nhận Đăng Ký', activate: 'Xác Minh Email', forgot: 'Quên Mật Khẩu', reset: 'Đặt Lại Mật Khẩu' }[mode]}</h2>
+              <h2 className="auth-form-title">{{ mfa: 'Xác Thực Hai Bước', 'signup-confirm': 'Xác Nhận Đăng Ký', activate: 'Xác Minh Email', forgot: 'Quên Mật Khẩu', reset: 'Đặt Lại Mật Khẩu' }[mode]}</h2>
               <p className="auth-form-subtitle">{mode === 'signup-confirm' ? `Hoàn tất đăng ký cho ${email}` : mode === 'activate' ? 'Xác minh email để tiếp tục hành trình.' : 'Bảo vệ tài khoản của bạn.'}</p>
               <form onSubmit={handleSubmit} className="auth-clean-form">
+                {mode === 'mfa' && <><p>Nhập mã trong ứng dụng Authenticator, không phải mã email.</p><div className="auth-field bordered"><label htmlFor="mfa-code">{useRecovery ? 'Mã dự phòng' : 'Mã Authenticator'}</label><input id="mfa-code" required value={useRecovery ? recoveryCode : otp} onChange={event => useRecovery ? setRecoveryCode(event.target.value) : setOtp(event.target.value.replace(/\D/g, '').slice(0,6))} inputMode={useRecovery ? 'text' : 'numeric'} autoComplete={useRecovery ? 'off' : 'one-time-code'}/></div><button type="button" className="auth-forgot-link" onClick={() => { setUseRecovery(value => !value); setOtp(''); setRecoveryCode(''); }}>{useRecovery ? 'Dùng Authenticator' : 'Dùng mã dự phòng'}</button></>}
+
                 {['activate', 'forgot'].includes(mode) && <div className="auth-field bordered"><label htmlFor="step-email">Email</label><input id="step-email" type="email" required autoComplete="email" value={email} onChange={event => setEmail(event.target.value)}/></div>}
                 {mode === 'activate' && <div className="auth-field bordered"><label htmlFor="step-otp">Mã OTP</label><input id="step-otp" required inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} value={otp} onChange={event => setOtp(event.target.value.replace(/[^0-9]/g, '').slice(0, 6))} onPaste={event => { event.preventDefault(); setOtp(event.clipboardData.getData('text').replace(/[^0-9]/g, '').slice(0, 6)); }}/></div>}
                 {mode === 'reset' && <div className="auth-field bordered"><label htmlFor="reset-password">Mật khẩu mới</label><input id="reset-password" type={showPassword ? 'text' : 'password'} autoComplete="new-password" required minLength={15} maxLength={128} value={password} onChange={event => setPassword(event.target.value)}/></div>}

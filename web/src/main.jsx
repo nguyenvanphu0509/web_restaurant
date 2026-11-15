@@ -1,3 +1,4 @@
+import { Security } from './pages/Security.jsx';
 import React, { useRef } from 'react';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter, Link, Navigate, Route, Routes, useLocation } from 'react-router-dom';
@@ -72,6 +73,7 @@ function App() {
         <Route path="/dishes" element={<Catalog/>}/>
         <Route path="/dishes/:id" element={<PublicDetail resource="dishes"/>}/>
         <Route element={<ProtectedRoute/>}>
+        <Route path="/account/security" element={<Security/>}/>
         {['chefs', 'ingredients', 'restaurants'].map(resource => (
           <React.Fragment key={resource}>
             <Route path={`/${resource}/:id`} element={<PublicDetail key={resource} resource={resource}/>}/>

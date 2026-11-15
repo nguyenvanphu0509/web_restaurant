@@ -40,15 +40,29 @@ export function AuthProvider({ children }) {
   }, [session]);
   const login = async ({ email, password, remember = false, captchaToken }) => {
     const result = await api('/auth/login', { method: 'POST', auth: false, data: { email: email.trim().toLowerCase(), password, captcha: captchaToken } });
+    if (result.data.next === 'mfa') return result.data;
     if (!validSession(result.data)) throw new ApiError('technical', 'API chưa trả access token hợp lệ.');
     const claims = tokenClaims(result.data.accessToken);
     const user = result.data.user || { id: claims.sub, email: email.trim().toLowerCase(), role: claims.role };
     setSession({ accessToken: result.data.accessToken, user }, remember);
     return user;
   };
+  const finishMfa = async ({ challenge, otp, recoveryCode, remember }) => {
+    const result = await api('/auth/mfa', { method: 'POST', auth: false, data: { challenge, otp, recoveryCode } });
+    if (!validSession(result.data)) throw new ApiError('technical', 'API chưa trả token hợp lệ.');
+    setSession({ accessToken: result.data.accessToken, user: result.data.user }, remember);
+    return result.data.user;
+  };
+  const adoptSession = data => {
+    if (!validSession(data)) throw new ApiError('technical', 'API chưa trả token hợp lệ.');
+    let remember = false;
+    try { remember = !!localStorage.getItem('viet_cuisine_session'); } catch {}
+    setCurrentUser(data.user); setCheckedToken(data.accessToken);
+    setSession({ accessToken: data.accessToken, user: data.user }, remember);
+  };
   const register = data => api('/auth/register', { method: 'POST', auth: false, data });
   const logout = () => setSession(null);
-  return <AuthContext.Provider value={{ user: checkedToken === session?.accessToken ? currentUser : session?.user, isAuthenticated: !!session && validSession(session) && checkedToken === session.accessToken, checking: !!session && checkedToken !== session.accessToken, sessionError, retrySession: () => setRevision(value => value + 1), login, register, logout }}>{children}</AuthContext.Provider>;
+  return <AuthContext.Provider value={{ user: checkedToken === session?.accessToken ? currentUser : session?.user, isAuthenticated: !!session && validSession(session) && checkedToken === session.accessToken, checking: !!session && checkedToken !== session.accessToken, sessionError, retrySession: () => setRevision(value => value + 1), login, register, logout, finishMfa, adoptSession }}>{children}</AuthContext.Provider>;
 }
 export function useAuth() {
   const context = useContext(AuthContext);
