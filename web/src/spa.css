@@ -123,16 +123,29 @@ button:disabled { opacity: .55; cursor: wait; }
 }
 @media(prefers-reduced-motion:reduce) { .catalog-advanced summary > svg:last-child { transition:none; } }
 
+.sticky-masthead {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  transition: transform 180ms ease, background-color 180ms ease;
+}
+.sticky-masthead[data-scrolled="true"] { background-color: var(--paper); }
+body:has(.banner-hero-section) .sticky-masthead[data-scrolled="true"] { background-color: #07131b; }
+.sticky-masthead[data-hidden="true"]:not(:has(:focus-visible, details[open], .account-avatar[aria-expanded="true"])) {
+  transform: translateY(-110%);
+}
+@media (prefers-reduced-motion: reduce) { .sticky-masthead { transition: none; } }
+
 .header-auth-group { display: flex; align-items: center; gap: 12px; }
 .account-menu { position: relative; flex-shrink: 0; }
-.account-avatar, .account-panel-avatar { display: grid; place-items: center; width: 44px; height: 44px; border-radius: 50%; background: #14212D; color: #fff; font: 600 18px/1 Inter, sans-serif; }
-.account-avatar { border: 1.5px solid #14212D; padding: 0; cursor: pointer; box-shadow: 0 4px 14px rgba(20, 33, 45, 0.2); transition: background 160ms, box-shadow 160ms; }
-.account-avatar:hover, .account-avatar[aria-expanded="true"] { background: #E76F51; border-color:#E76F51; box-shadow: 0 0 0 4px rgba(231, 111, 81, 0.25); }
+.account-avatar, .account-panel-avatar { display: grid; place-items: center; width: 44px; height: 44px; border-radius: 50%; background: var(--turmeric); color: #14212D; font: 600 18px/1 Inter, sans-serif; }
+.account-avatar { border: 1.5px solid var(--turmeric); padding: 0; cursor: pointer; box-shadow: 0 4px 14px rgba(20, 33, 45, 0.2); transition: background 160ms, box-shadow 160ms; }
+.account-avatar:hover, .account-avatar[aria-expanded="true"] { background: var(--turmeric-gold); border-color:var(--turmeric-gold); box-shadow: 0 0 0 4px rgba(233, 196, 106, 0.25); }
 .account-avatar:focus-visible, .account-logout:focus-visible { outline: 2px solid #E76F51; outline-offset: 4px; }
 .account-panel { position: absolute; top: calc(100% + 14px); right: 0; z-index: 100; width: min(300px, calc(100vw - 48px)); box-sizing: border-box; padding: 20px; border: 1px solid #e5e0d5; border-radius: 18px; background: #fff; color: #14212D; box-shadow: 0 16px 44px rgba(20, 33, 45, 0.18); text-align: left; }
 .account-panel-heading { display: flex; align-items: center; gap: 12px; }
 .account-panel-heading > div { min-width: 0; }
-.account-panel-avatar { width: 40px; height: 40px; font-size: 16px; flex-shrink: 0; background: #FAF8F5; color: #14212D; border: 1px solid #E5E0D5; }
+.account-panel-avatar { width: 40px; height: 40px; font-size: 16px; flex-shrink: 0; border: 1px solid var(--turmeric-gold); }
 .account-panel .account-name { margin: 0 0 4px; font-size: 14px; line-height: 1.4; font-weight: 600; overflow-wrap: anywhere; }
 .account-role { color: #e76f51; font-size: 11px; font-weight: 600; text-transform: uppercase; }
 .account-panel .account-email { margin: 16px 0; color: #64748b; font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }

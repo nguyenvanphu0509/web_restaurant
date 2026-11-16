@@ -1,5 +1,6 @@
 import { createLimits, loginNeedsCaptcha } from '../../../shared/server/auth/limits.js';
 import {createMailSender,createMailTasks} from './mail.js';
+import {resetEmail,passwordChangedEmail} from '../../../shared/server/auth/mail-template.js';
 import {createActivationDelivery} from './activation.js';
 import './config.js';
 import session from 'express-session';
@@ -107,7 +108,8 @@ export function createAuth({schema='block8_auth',siteOrigin=origin,sessionStore,
    const t=token();
    await tx(async client=>{
      await client.query('SELECT id FROM block8_auth.users WHERE id=$1 FOR UPDATE',[user.id]);
-     await send(e,'Đặt lại mật khẩu',`${siteOrigin}/reset?token=${t}`);
+     const resetUrl = `${siteOrigin}/reset?token=${t}`;
+     await send(e,'Đặt lại mật khẩu',resetUrl,resetEmail(resetUrl,15));
      await client.query('UPDATE block8_auth.resets SET used_at=now() WHERE user_id=$1 AND used_at IS NULL',[user.id]);
      await client.query('INSERT INTO block8_auth.resets(hash,user_id,expires_at) VALUES($1,$2,$3)',[digest(t),user.id,new Date(Date.now()+900000)]);
    });
@@ -118,7 +120,8 @@ export function createAuth({schema='block8_auth',siteOrigin=origin,sessionStore,
    await new Promise((resolve,reject)=>req.session.regenerate(err=>err?reject(err):resolve()));
    req.session.csrf=token();req.session.passwordResetComplete=true;
    await new Promise((resolve,reject)=>req.session.save(err=>err?reject(err):resolve()));
-   mailTasks.afterResponse(res,()=>send(recipient,'Mật khẩu đã được thay đổi',`Mật khẩu tài khoản của bạn đã được thay đổi. Các phiên đăng nhập cũ đã kết thúc. Nếu bạn không thực hiện thay đổi này, hãy yêu cầu đặt lại mật khẩu tại ${siteOrigin}/forgot.`));
+   const forgotUrl = `${siteOrigin}/forgot`;
+   mailTasks.afterResponse(res,()=>send(recipient,'Mật khẩu đã được thay đổi',`Mật khẩu tài khoản của bạn đã được thay đổi. Các phiên đăng nhập cũ đã kết thúc. Nếu bạn không thực hiện thay đổi này, hãy yêu cầu đặt lại mật khẩu tại ${forgotUrl}.`,passwordChangedEmail(forgotUrl)));
    return res.redirect(303,'/login');
  }form(req,res,'reset','Liên kết không hợp lệ, đã hết hạn hoặc đã được sử dụng.',400,{resetToken:'',resetAvailable:false});});
  return {middleware,router,csrf,requireAuth,pool,drainMail:()=>mailTasks.drain()};

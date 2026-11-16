@@ -64,3 +64,26 @@ export function NavigationEffects() {
   }, [location.pathname, location.search, location.hash]);
   return null;
 }
+
+export function useHeaderScroll(pathname) {
+  const [header, setHeader] = useState({ hidden: false, scrolled: false });
+  useEffect(() => {
+    let lastScroll = Math.max(window.scrollY, 0);
+    setHeader({ hidden: false, scrolled: lastScroll > 8 });
+    const onScroll = () => {
+      // Ignore elastic scrolling past the page boundaries.
+      const maxScroll = document.documentElement.scrollHeight - window.innerHeight;
+      const scroll = Math.max(0, Math.min(window.scrollY, maxScroll));
+      const delta = scroll - lastScroll;
+      if (scroll > 8 && Math.abs(delta) < 6) return;
+      lastScroll = scroll;
+      const scrolled = scroll > 8;
+      const hidden = scrolled && delta > 0;
+      setHeader(current => current.hidden === hidden && current.scrolled === scrolled
+        ? current : { hidden, scrolled });
+    };
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => window.removeEventListener('scroll', onScroll);
+  }, [pathname]);
+  return header;
+}

@@ -66,7 +66,7 @@ try {
   await page.getByText('Bạn không có quyền thực hiện thao tác này.').waitFor();
   await page.getByRole('button', { name: /^Tài khoản của / }).click();
   await page.getByRole('button', { name: 'Đăng xuất', exact: true }).click();
-  await page.waitForURL('**/login?redirect=*');
+  await page.waitForURL('**/login');
   await page.goto('http://localhost:5179/signup');
   await page.locator('#signup-username').fill('eli_trekker');
   await page.locator('#signup-email').fill('user@example.com');

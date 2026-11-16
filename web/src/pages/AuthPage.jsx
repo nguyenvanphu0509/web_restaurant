@@ -246,7 +246,7 @@ export function AuthPage({ initialMode = 'login' }) {
 
               <form onSubmit={handleSubmit} className="auth-clean-form">
                 <div className="auth-field bordered">
-                  <label htmlFor="login-identity">Email hoặc Tên tài khoản</label>
+                  <label htmlFor="login-identity">Email</label>
                   <input
                     id="login-identity"
                     type="email"

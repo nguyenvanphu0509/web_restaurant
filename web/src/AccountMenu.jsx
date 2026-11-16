@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from './AuthContext.jsx';
 
 export function AccountMenu() {
@@ -7,6 +7,7 @@ export function AccountMenu() {
   const [open, setOpen] = useState(false);
   const root = useRef(null), trigger = useRef(null), panelId = useId();
   const location = useLocation();
+  const navigate = useNavigate();
   const name = user?.name?.trim() || user?.username?.trim() || user?.email?.split('@')[0] || 'Bạn';
   const initial = Array.from(name)[0].toLocaleUpperCase('vi-VN');
   const role = { admin: 'Quản trị viên', editor: 'Biên tập viên', viewer: 'Thành viên' }[user?.role] || 'Thành viên';
@@ -32,7 +33,10 @@ export function AccountMenu() {
     {open && <section id={panelId} className="account-panel" aria-label="Thông tin tài khoản">
       <div className="account-panel-heading"><span className="account-panel-avatar" aria-hidden="true">{initial}</span><div><p className="account-name">{name}</p><span className="account-role">{role}</span></div></div>
       <p className="account-email">{user?.email}</p>
-      <button type="button" className="account-logout" onClick={logout}>
+      <button type="button" className="account-logout" onClick={() => {
+        logout();
+        navigate('/login', { replace: true });
+      }}>
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><path d="M10 17v3H4V4h6v3M9 12h12m-4-4 4 4-4 4"/></svg>
         Đăng xuất
       </button>

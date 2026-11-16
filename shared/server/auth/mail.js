@@ -5,10 +5,10 @@ export class MailDeliveryError extends Error {
 // Never log recipients, message contents, SMTP response text or credentials.
 // One retry only for explicit temporary failures, with the SAME message/OTP.
 export function createMailSender(mailer, {from, logger = console} = {}) {
-  return async (to, subject, text) => {
+  return async (to, subject, text, { html, attachments } = {}) => {
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
-        const info = await mailer.sendMail({from, to, subject, text});
+        const info = await mailer.sendMail({from, to, subject, text, html, attachments});
         if (Array.isArray(info?.accepted) && info.accepted.length === 0) throw new MailDeliveryError();
         return;
       } catch (error) {

@@ -2,7 +2,7 @@ import React, { useRef } from 'react';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter, Link, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { api } from './api.js';
-import { useLoad, useMotion, NavigationEffects } from './hooks.js';
+import { useLoad, useMotion, useHeaderScroll, NavigationEffects } from './hooks.js';
 import { AuthProvider, useAuth, ProtectedRoute } from './AuthContext.jsx';
 import { AuthPage } from './pages/AuthPage.jsx';
 import { Home } from './pages/Home.jsx';
@@ -17,6 +17,7 @@ function App() {
   const { isAuthenticated } = useAuth();
   const config = useLoad('config', signal => api('/config', { signal }));
   useMotion(root, location.pathname);
+  const header = useHeaderScroll(location.pathname);
 
   const isAuthPage = ['/login', '/signup', '/register', '/activate', '/forgot', '/reset'].includes(location.pathname);
   const dishesLink = '/dishes';
@@ -26,39 +27,41 @@ function App() {
       <NavigationEffects/>
       <a className="skip-link" href="#main">Đến nội dung chính</a>
       {!isAuthPage && (
-        <header className="site-header shell">
-          <Link className="brand" to="/">
-            <span className="brand-logo"><img src="/images/logo.png" alt="" width="2048" height="2048"/></span>
-            <span>SEACLUB · ẨM THỰC VIỆT<span className="brand-sub">SEAFOOD + WINE · TINH HOA HƯƠNG VỊ</span></span>
-          </Link>
-          <nav className="desktop-nav" aria-label="Điều hướng chính">
-            <Link to={dishesLink}>Menu</Link>
-            <Link to="/#about">About</Link>
-            <Link to="/#offer">Events</Link>
-            <Link to="/#destinations">Contacts</Link>
-          </nav>
-          <div className="header-actions">
-            <a className="header-book-table-link" href="/#booking">Book a table</a>
-            {isAuthenticated ? (
-              <div className="header-auth-group">
-                <AccountMenu/>
-              </div>
-            ) : (
-              <div className="header-auth-group">
-                <Link className="header-login-link" to="/login">Đăng nhập</Link>
-              </div>
-            )}
-          </div>
-          <details className="mobile-menu" key={location.pathname}>
-            <summary aria-label="Mở điều hướng">☰</summary>
-            <nav>
-              <Link to="/#destinations">Khám phá</Link>
-              <Link to={dishesLink}>Món ăn</Link>
-              {!isAuthenticated && <Link to="/login">Đăng nhập / Đăng ký</Link>}
-              <Link to="/admin/dishes">Quản trị demo</Link>
+        <div className="sticky-masthead" data-hidden={header.hidden} data-scrolled={header.scrolled}>
+          <header className="site-header shell">
+            <Link className="brand" to="/">
+              <span className="brand-logo"><img src="/images/logo.png" alt="" width="2048" height="2048"/></span>
+              <span>SEACLUB · ẨM THỰC VIỆT<span className="brand-sub">SEAFOOD + WINE · TINH HOA HƯƠNG VỊ</span></span>
+            </Link>
+            <nav className="desktop-nav" aria-label="Điều hướng chính">
+              <Link to={dishesLink}>Menu</Link>
+              <Link to="/#about">About</Link>
+              <Link to="/#offer">Events</Link>
+              <Link to="/#destinations">Contacts</Link>
             </nav>
-          </details>
-        </header>
+            <div className="header-actions">
+              <a className="header-book-table-link" href="/#booking">Book a table</a>
+              {isAuthenticated ? (
+                <div className="header-auth-group">
+                  <AccountMenu/>
+                </div>
+              ) : (
+                <div className="header-auth-group">
+                  <Link className="header-login-link" to="/login">Đăng nhập</Link>
+                </div>
+              )}
+            </div>
+            <details className="mobile-menu" key={location.pathname}>
+              <summary aria-label="Mở điều hướng">☰</summary>
+              <nav>
+                <Link to="/#destinations">Khám phá</Link>
+                <Link to={dishesLink}>Món ăn</Link>
+                {!isAuthenticated && <Link to="/login">Đăng nhập / Đăng ký</Link>}
+                <Link to="/admin/dishes">Quản trị demo</Link>
+              </nav>
+            </details>
+          </header>
+        </div>
       )}
       {!isAuthPage && config.result?.data.preview && (
         <aside className="preview-note shell" role="status">Chế độ chỉ đọc · thao tác lưu bị khóa.</aside>
@@ -69,9 +72,9 @@ function App() {
         <Route path="/signup" element={<AuthPage initialMode="signup"/>}/>
         <Route path="/register" element={<AuthPage initialMode="signup"/>}/>
         {['activate', 'forgot', 'reset'].map(mode => <Route key={mode} path={`/${mode}`} element={<AuthPage initialMode={mode}/>}/>)}
-        <Route path="/dishes" element={<Catalog/>}/>
         <Route path="/dishes/:id" element={<PublicDetail resource="dishes"/>}/>
         <Route element={<ProtectedRoute/>}>
+        <Route path="/dishes" element={<Catalog/>}/>
         {['chefs', 'ingredients', 'restaurants'].map(resource => (
           <React.Fragment key={resource}>
             <Route path={`/${resource}/:id`} element={<PublicDetail key={resource} resource={resource}/>}/>

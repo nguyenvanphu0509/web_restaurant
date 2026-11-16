@@ -28,6 +28,8 @@ try {
     } };
   });
   await page.route('**/recaptcha/**', route => route.abort());
+  await page.goto('http://localhost:5179/dishes?q=pho');
+  await page.waitForURL(url => url.pathname === '/login' && url.searchParams.get('redirect') === '/dishes?q=pho');
   await page.goto('http://localhost:5179/signup');
   await page.locator('#signup-username').fill('API User');
   await page.locator('#signup-email').fill('browser@example.com');
@@ -45,6 +47,10 @@ try {
   assert.equal(messages.length, 1);
   await page.getByLabel('Mã OTP').fill(messages[0].text.match(/\d{6}/)[0]);
   await page.getByRole('button', { name: 'Xác minh email', exact: true }).click();
+  await page.getByText('Email đã xác minh.', { exact: false }).waitFor();
+  await page.goto('http://localhost:5179/');
+  await page.getByRole('navigation', { name: 'Điều hướng chính' }).getByRole('link', { name: 'Menu', exact: true }).click();
+  await page.waitForURL(url => url.pathname === '/login' && url.searchParams.get('redirect') === '/dishes');
   await page.locator('#login-identity').fill('browser@example.com');
   await page.locator('#login-pass').fill('valid-long-password-123');
   await page.getByRole('button', { name: 'Đăng nhập', exact: true }).click();
@@ -84,8 +90,16 @@ try {
   const status = await page.evaluate(async token => (await fetch('http://localhost:3189/api/auth/me', { headers: { Authorization: `Bearer ${token}` } })).status, token);
   assert.equal(status, 500); assert.equal(calls, 1);
   pool.query = query; pool.connect = connect;
+  await page.goto('http://localhost:5179/');
+  const masthead = page.locator('.sticky-masthead');
+  await page.evaluate(() => window.scrollTo({ top: 500, behavior: 'instant' }));
+  await page.waitForFunction(() => document.querySelector('.sticky-masthead').getBoundingClientRect().bottom <= 0);
+  await page.evaluate(() => window.scrollBy({ top: -12, behavior: 'instant' }));
+  await page.waitForFunction(() => Math.abs(document.querySelector('.sticky-masthead').getBoundingClientRect().top) < 1);
+  assert.equal(await masthead.getAttribute('data-scrolled'), 'true');
   await page.getByRole('button', { name: /^Tài khoản của / }).click();
   await page.getByRole('button', { name: 'Đăng xuất', exact: true }).click();
+  await page.waitForURL('**/login');
   await page.goto('http://localhost:5179/admin/dishes');
   await page.waitForURL('**/login?redirect=*');
   await page.getByText('Quên mật khẩu?', { exact: true }).click();
@@ -105,7 +119,7 @@ try {
   await page.waitForURL('**/dishes');
   await page.locator('.dish-card').first().waitFor();
   assert.deepEqual(errors, []);
-  console.log('SPA/API integration passed: signup, CAPTCHA, OTP, real login/token, public catalog, active Viewer CRUD, zero-DB crypto verification, forgot/reset, new password login.');
+  console.log('SPA/API integration passed: signup, CAPTCHA, OTP, real login/token, Menu login redirect, active Viewer CRUD, zero-DB crypto verification, forgot/reset, new password login.');
 } finally {
   await browser?.close(); await auth.drainMail();
   await new Promise(resolve => server.close(resolve)); await pool.end();
