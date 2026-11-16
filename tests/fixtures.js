@@ -3,7 +3,7 @@ import { demoDishes, demoChefs, demoIngredients, reviews } from '../api/data/dem
 import { normalizeSearch } from '../api/src/lib/search.js';
 // Isolated test double for HTTP contracts. Real Prisma/PG tests are separate.
 export function createFixture() {
-  const storage = { dish: structuredClone(demoDishes), chef: structuredClone(demoChefs), ingredient: structuredClone(demoIngredients) };
+  const storage = { dish: structuredClone(demoDishes).map(row => ({ status: 'published', ...row })), chef: structuredClone(demoChefs), ingredient: structuredClone(demoIngredients) };
   storage.restaurant = [
     { id: 1, name: 'Phở Minh (Sài Gòn)', cuisine: 'Noodles', district: 'Quận 1', notableDishes: ['Phở bò'] },
     { id: 2, name: 'Xôi Gà Number One', cuisine: 'Street Food', district: 'Quận 1', notableDishes: ['Xôi gà'] },
@@ -59,7 +59,7 @@ export function createFixture() {
         return row ? structuredClone(expand(row,name)) : null;
       },
       async create({ data }) {
-        const record = { id: Math.max(0, ...rows.map(row => row.id)) + 1, createdAt: new Date(), ...data };
+        const record = { id: Math.max(0, ...rows.map(row => row.id)) + 1, createdAt: new Date(), ...(name === 'dish' && { status: 'published' }), ...data };
         if(name === 'dish') { relations(record,data); delete record.ingredients; }
         rows.push(record); return structuredClone(record);
       },
@@ -83,6 +83,9 @@ export function createFixture() {
   // actual SQL correctness are verified against PostgreSQL in block7.integration.js.
   db.$queryRaw = async sql => {
     const text = sql.text, values = sql.values;
+    const locked = /^SELECT id FROM "(dishes|chefs|ingredients|restaurants)" WHERE id = \$1 FOR UPDATE$/.exec(text);
+    if (locked) return storage[({ dishes: 'dish', chefs: 'chef', ingredients: 'ingredient', restaurants: 'restaurant' })[locked[1]]]
+      .filter(row => row.id === values[0]).map(({ id }) => ({ id }));
     if (/searchVector|block7_similarity/.test(text)) throw new Error('Use PostgreSQL integration tests for ranked search.');
     let result = storage.dish.map(row => expand(row, 'dish'));
     const folded = value => String(value).normalize('NFD').replace(/\p{M}/gu, '').replace(/đ/g, 'd').toLowerCase();

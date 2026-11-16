@@ -3,12 +3,17 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { Client } from 'pg';
+import { readFile } from 'node:fs/promises';
+import { setTimeout as delay } from 'node:timers/promises';
+import { Client, Pool } from 'pg';
 import { PrismaClient } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import request from 'supertest';
 import { migrateBlock7 } from '../api/scripts/migrate-block7.js';
 import { createApi } from './auth-fixture.js';
+import { createApi as createApp } from '../api/src/app.js';
+import { createAuth } from '../api/src/auth/index.js';
+import { isolatedDatabase } from './block7-db.js';
 
 test('Block6 API on PostgreSQL: CRUD, filters, relations, transaction rollback and delete policies', { skip: !process.env.TEST_DATABASE_URL, timeout: 120000 }, async () => {
   const schema = `block6_test_${randomUUID().replaceAll('-', '')}`;
@@ -70,5 +75,50 @@ test('Block6 API on PostgreSQL: CRUD, filters, relations, transaction rollback a
     await db?.$disconnect();
     await control.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
     await control.end();
+  }
+});
+
+test('CSR write rechecks a dish after waiting on the PostgreSQL row lock', { skip: !process.env.TEST_DATABASE_URL, timeout: 60000 }, async () => {
+  const { db, schema, close } = await isolatedDatabase();
+  const pool = new Pool({ connectionString: process.env.TEST_DATABASE_URL });
+  const auth = createAuth({ pool, schema, sharedCatalogDatabase: true,
+    secret: 'postgres-test-only-signing-secret-32-bytes', mailer: { sendMail: async () => {} } });
+  const app = createApp({ db, auth });
+  const blocker = await pool.connect();
+  let pending;
+  try {
+    const migration = await readFile(new URL('../api/migrations/001-auth.sql', import.meta.url), 'utf8');
+    await pool.query(migration.replaceAll('block8_auth', schema));
+    const chef = await db.chef.create({ data: { name: 'Editor chef' } });
+    const dish = await db.dish.create({ data: { name: 'Draft for lock test', status: 'draft', chefId: chef.id } });
+    const { rows: [editor] } = await pool.query(`INSERT INTO ${schema}.users(email,password_hash,role,status,email_verified_at,chef_id)
+      VALUES('editor@example.test','test-only','editor','active',now(),$1) RETURNING id,role`, [chef.id]);
+    const token = await auth.jwt.sign(editor);
+    const publicPath = `/api/dishes/${dish.id}`;
+    await request(app).get(`/api/admin/dishes/${dish.id}/edit`).auth(token, { type: 'bearer' }).expect(200);
+    await blocker.query('BEGIN');
+    await blocker.query(`UPDATE ${schema}.dishes SET status='published' WHERE id=$1`, [dish.id]);
+    pending = request(app).patch(publicPath).auth(token, { type: 'bearer' }).send({ name: 'Should not be saved' }).then(result => result);
+    let waiting = false;
+    for (let attempt = 0; attempt < 100 && !waiting; attempt++) {
+      const { rows: [row] } = await pool.query(`SELECT EXISTS (SELECT 1 FROM pg_stat_activity
+        WHERE wait_event_type='Lock' AND $1 = ANY(pg_blocking_pids(pid))) AS waiting`, [blocker.processID]);
+      waiting = row.waiting;
+      if (!waiting) await delay(25);
+    }
+    assert.ok(waiting, 'PATCH should wait for the lock after reading the committed draft');
+    await blocker.query('COMMIT');
+    const denied = await pending;
+    assert.equal(denied.status, 403);
+    assert.equal(denied.body.error.code, 'FORBIDDEN');
+    const saved = await db.dish.findUniqueOrThrow({ where: { id: dish.id } });
+    assert.equal(saved.status, 'published');
+    assert.equal(saved.name, dish.name);
+  } finally {
+    await blocker.query('ROLLBACK');
+    blocker.release();
+    await pending?.catch(() => {});
+    await pool.end();
+    await close();
   }
 });

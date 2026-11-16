@@ -11,6 +11,8 @@ button:disabled { opacity: .55; cursor: wait; }
 .field input[type=radio] { width:auto; padding:0; }
 .record-meta dd { overflow-wrap: anywhere; }
 .admin-nav { display:flex; flex-wrap:wrap; gap:16px; margin-bottom:32px; }
+.admin-search { display:flex; flex-wrap:wrap; align-items:flex-end; gap:12px; margin:0 0 24px; }
+.admin-search .field { flex:1 1 16rem; min-width:0; max-width:32rem; margin:0; }
 .admin-table-wrap { overflow-x: auto; }
 .admin-table { width:100%; border-collapse:collapse; background:#fff; border-radius:18px; overflow:hidden; border:1px solid #e8e3d9; box-shadow:0 8px 24px rgba(20,33,45,0.04); }
 .admin-table th { padding:16px 20px; background:#14212D; color:#fff; font-size:12px; font-weight:600; letter-spacing:0.5px; text-align:left; border:0; }
@@ -140,5 +142,6 @@ button:disabled { opacity: .55; cursor: wait; }
 .account-logout:hover { background: #FDEEE9; color: #E76F51; border-color: #E76F51; }
 @media (max-width: 800px) { .header-auth-group > .button { display: none; } }
 @media (max-width: 800px) { .header-auth-group > .button { display: none; } }
-.account-security-link { display: block; margin-bottom: 14px; font-size: 13px; color: #315c4d; }
-.mfa-secret { overflow-wrap: anywhere; }
+.account-security-link { display: flex; align-items: center; justify-content: space-between; width: 100%; margin-bottom: 10px; padding: 10px 14px; border: 1px solid #e5e0d5; border-radius: 10px; background: #fff; color: #14212d; font-size: 13px; font-weight: 600; text-align: left; cursor: pointer; }
+.account-security-link span { color: #a23c2c; font-size: 20px; line-height: 1; }
+.account-security-link:hover { background: #fff4ef; border-color: #ecc7bb; }

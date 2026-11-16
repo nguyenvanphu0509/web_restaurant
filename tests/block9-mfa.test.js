@@ -57,23 +57,49 @@ test('TOTP enrollment, encrypted secret, replay guard, recovery replacement and 
 });
 test('API requires MFA before JWT; challenge is not Bearer; configuration changes revoke old JWT',async()=>{
  const ctx=await setup();const {pool,user}=ctx;
- const auth=createAuth({pool,secret:'test-secret-for-mfa-api-32-bytes-long',mfaEncryptionKey:key,recaptchaVerifier:async()=>true,mailer:{sendMail:async()=>({accepted:['test']})}});
+ const messages=[];
+ const auth=createAuth({pool,secret:'test-secret-for-mfa-api-32-bytes-long',mfaEncryptionKey:key,recaptchaVerifier:async()=>true,mailer:{sendMail:async message=>{messages.push(message);return {accepted:['test']};}}});
  const app=createApi({db:createFixture().db,auth});
- const login=()=>request(app).post('/api/auth/login').send({email:user.email,password,captcha:'test'});
+ const login=(value=password)=>request(app).post('/api/auth/login').send({email:user.email,password:value,captcha:'test'});
  try{
   const old=(await login()).body.data.accessToken;
   const setup=(await request(app).post('/api/auth/mfa/setup').set('Authorization',`Bearer ${old}`).send({password})).body.data;
   const code=()=>new OTPAuth.TOTP({secret:setup.secret}).generate();
-  const enabled=(await request(app).post('/api/auth/mfa/confirm').set('Authorization',`Bearer ${old}`).send({otp:code()})).body.data;
+  const enrollmentOtp=code();
+  const enabled=(await request(app).post('/api/auth/mfa/confirm').set('Authorization',`Bearer ${old}`).send({otp:enrollmentOtp})).body.data;
   assert.equal(enabled.recoveryCodes.length,10);assert.ok(enabled.accessToken);
   await request(app).get('/api/auth/me').set('Authorization',`Bearer ${old}`).expect(401);
   const pending=(await login()).body.data;assert.equal(pending.next,'mfa');assert.equal(pending.accessToken,undefined);
   await request(app).get('/api/auth/me').set('Authorization',`Bearer ${pending.challenge}`).expect(401);
+  await request(app).get('/api/admin/dishes').auth(pending.challenge,{type:'bearer'}).expect(401);
+  await request(app).post('/api/dishes').send({name:'Requires MFA',price:1}).expect(401);
+  const repeatedOtp=await request(app).post('/api/auth/mfa').send({challenge:pending.challenge,otp:enrollmentOtp}).expect(200);
+  assert.equal(repeatedOtp.body.error.code,'INVALID_OTP');
   const complete=await request(app).post('/api/auth/mfa').send({challenge:pending.challenge,recoveryCode:enabled.recoveryCodes[0]});
   assert.ok(complete.body.data.accessToken);
+  await request(app).get('/api/admin/dishes').auth(complete.body.data.accessToken,{type:'bearer'}).expect(200);
   const replay=await request(app).post('/api/auth/mfa').send({challenge:pending.challenge,recoveryCode:enabled.recoveryCodes[1]});
   assert.equal(replay.body.error.code,'INVALID_MFA_CHALLENGE');
-  await pool.query('UPDATE block8_auth.users SET version=version+1');
-  assert.equal((await login()).body.data.next,'mfa');
+  const beforeReset=(await login()).body.data.challenge;
+  await request(app).post('/api/auth/forgot').send({email:user.email}).expect(200);
+  await auth.drainMail();
+  const resetToken=messages.find(message=>message.subject==='Đặt lại mật khẩu').text.match(/token=([a-f0-9]+)/)[1];
+  const newPassword='new-mfa-test-password-long-123';
+  const reset=await request(app).post('/api/auth/reset').send({token:resetToken,password:newPassword,confirmPassword:newPassword}).expect(200);
+  assert.deepEqual(reset.body.data,{changed:true});
+  const obsolete=await request(app).post('/api/auth/mfa').send({challenge:beforeReset,recoveryCode:enabled.recoveryCodes[1]}).expect(200);
+  assert.equal(obsolete.body.error.code,'INVALID_MFA_CHALLENGE');
+  const afterReset=(await login(newPassword)).body.data;
+  assert.equal(afterReset.next,'mfa');
+  assert.equal(afterReset.accessToken,undefined);
+  const recovered=await request(app).post('/api/auth/mfa').send({challenge:afterReset.challenge,recoveryCode:enabled.recoveryCodes[1]}).expect(200);
+  await request(app).get('/api/admin/dishes').auth(recovered.body.data.accessToken,{type:'bearer'}).expect(200);
+  const lockChallenge=(await login(newPassword)).body.data.challenge;
+  for (let attempt=1;attempt<=5;attempt++) {
+   const denied=await request(app).post('/api/auth/mfa').send({challenge:lockChallenge,recoveryCode:enabled.recoveryCodes[0]}).expect(attempt===5?429:200);
+   assert.equal(denied.body.error.code,attempt===5?'RATE_LIMITED':'INVALID_OTP');
+  }
+  const newChallenge=(await login(newPassword)).body.data.challenge;
+  await request(app).post('/api/auth/mfa').send({challenge:newChallenge,recoveryCode:enabled.recoveryCodes[2]}).expect(429).expect('Retry-After','900');
  }finally{await auth.drainMail();await pool.end();}
 });

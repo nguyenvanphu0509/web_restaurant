@@ -1,4 +1,4 @@
-# Block 9: SSR permissions and MFA (Authenticator)
+# Block 9: SSR and CSR permissions and MFA (Authenticator)
 
 ## Start and use your phone
 
@@ -28,7 +28,7 @@ separate account databases, enroll separately (labels distinguish SSR and SPA).
 
 ## Permissions
 
-SSR admin read is available to Viewer/Editor/Admin. Viewer cannot write; Editor
+SSR and CSR admin read is available to Viewer/Editor/Admin. Viewer cannot write; Editor
 can create/update but cannot delete. Editor can update dishes only when the
 persisted chefId matches the account chef_id and status is draft. Editor-created
 dishes get that chef and draft status from the server. Only Admin changes dish
@@ -39,9 +39,12 @@ under row locks inside transactions for writes. Role/owner/status fields supplie
 by a client never grant permission. Validation failures roll back inline parent
 creation. Permission checks run before upload or relation writes.
 
-API CRUD intentionally retains slide 1–35 behavior: every active authenticated
-account can write, regardless of role. This is not a global RBAC restriction when
-the SSR and API point at the same catalog. API dish reads remain public.
+CSR admin reads and form checks use `GET /api/admin/:resource` and its detail,
+`new`, `edit`, and `delete` routes. The API returns current permissions for the
+interface. The existing API mutation routes enforce those same rules on every
+write. A missing or invalid JWT returns `401`. Insufficient permissions return
+`403` with `FORBIDDEN`. The public catalog still reads dishes through
+`GET /api/dishes` and `GET /api/dishes/:id`.
 
 ## Security behavior
 

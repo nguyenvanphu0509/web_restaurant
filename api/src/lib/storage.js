@@ -16,7 +16,7 @@ export function validateImageFile(file) {
   if (file.size > 5 * 1024 * 1024) throw new StorageError(400, 'Ảnh không được vượt quá 5 MB.');
 }
 
-export async function uploadImage(file) {
+export async function uploadImage(file, { signal } = {}) {
   validateImageFile(file);
   const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, SUPABASE_STORAGE_BUCKET = 'dish-images' } = process.env;
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
@@ -27,7 +27,7 @@ export async function uploadImage(file) {
   const response = await fetch(`${SUPABASE_URL}/storage/v1/object/${SUPABASE_STORAGE_BUCKET}/${path}`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`, apikey: SUPABASE_SERVICE_ROLE_KEY, 'Content-Type': file.mimetype, 'x-upsert': 'false' },
-    body: file.buffer,
+    body: file.buffer, signal,
   });
   if (!response.ok) throw new StorageError(502, `Không thể tải ảnh lên Supabase Storage (HTTP ${response.status}).`);
   return `${SUPABASE_URL}/storage/v1/object/public/${SUPABASE_STORAGE_BUCKET}/${path}`;

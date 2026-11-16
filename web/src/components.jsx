@@ -13,6 +13,7 @@ export function Picture({ src, alt, fallback = '/images/noodles.svg', ...props }
 }
 export function StateView({ state }) {
   if (state.status === 'ok') return null;
+  if (state.status === 'forbidden') return <div className="empty-state" role="alert"><h2>403 · Không có quyền</h2><p>{state.error.message}</p></div>;
   return <div className="empty-state" role={state.status === 'error' ? 'alert' : 'status'} aria-live="polite">
     <h2>{state.status === 'loading' ? 'Đang tải…' : state.status === 'notFound' ? 'Không tìm thấy bản ghi' : 'Không thể tải dữ liệu'}</h2>
     {state.error && <p>{state.error.message}</p>}

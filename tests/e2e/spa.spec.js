@@ -9,6 +9,36 @@ test.beforeEach(async ({ page }) => {
 });
 test.afterEach(async ({ page }) => { expect(page.__reactErrors).toEqual([]); });
 
+test('admin dish search finds a newly created dish by its unaccented name', async ({ page }) => {
+  const created = await page.request.post('http://localhost:3100/api/dishes', {
+    data: { name: 'Món test Bài 2', price: 50000, status: 'draft' },
+  });
+  const { data: dish } = await created.json();
+  expect(dish?.id).toBeTruthy();
+  try {
+    await page.goto('/admin/dishes?page=2&pageSize=1');
+    await expect(page.locator('.admin-table tbody tr')).toHaveCount(1);
+    const search = page.getByRole('searchbox', { name: 'Tìm món ăn' });
+    await search.fill('mon test bai 2');
+    await search.press('Enter');
+    const match = page.getByRole('link', { name: dish.name, exact: true });
+    await expect(match).toHaveAttribute('href', `/admin/dishes/${dish.id}`);
+    expect(new URL(page.url()).searchParams.get('page')).toBeNull();
+    await page.reload();
+    await expect(search).toHaveValue('mon test bai 2');
+    await expect(match).toBeVisible();
+
+    await search.fill('khong co mon nao khop');
+    await page.getByRole('button', { name: 'Tìm kiếm', exact: true }).click();
+    await expect(page.getByText('Không tìm thấy món ăn phù hợp.')).toBeVisible();
+    await page.getByRole('link', { name: 'Xóa tìm kiếm' }).click();
+    await expect(search).toHaveValue('');
+    await expect(page.locator('.admin-table tbody tr')).toHaveCount(1);
+  } finally {
+    await page.request.delete(`http://localhost:3100/api/dishes/${dish.id}`);
+  }
+});
+
 test('review pagination keeps the layout while loading and replaces the reviews', async ({ page }) => {
   await page.goto('/?destinationQ=pho#reviews');
   await expect(page.locator('.review-person strong').first()).toHaveText('Mai An');

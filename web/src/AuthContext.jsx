@@ -40,7 +40,10 @@ export function AuthProvider({ children }) {
   }, [session]);
   const login = async ({ email, password, remember = false, captchaToken }) => {
     const result = await api('/auth/login', { method: 'POST', auth: false, data: { email: email.trim().toLowerCase(), password, captcha: captchaToken } });
-    if (result.data.next === 'mfa') return result.data;
+    if (result.data.next === 'mfa') {
+      setSession(null);
+      return result.data;
+    }
     if (!validSession(result.data)) throw new ApiError('technical', 'API chưa trả access token hợp lệ.');
     const claims = tokenClaims(result.data.accessToken);
     const user = result.data.user || { id: claims.sub, email: email.trim().toLowerCase(), role: claims.role };

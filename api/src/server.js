@@ -7,9 +7,11 @@ import nodemailer from 'nodemailer';
 
 const db = createDatabaseClient();
 const port = Number(process.env.API_PORT || process.env.PORT || 3000);
-const pool = new pg.Pool({ connectionString: process.env.AUTH_DATABASE_URL || process.env.DATABASE_URL, connectionTimeoutMillis: 5000 });
+const authDatabaseUrl = process.env.AUTH_DATABASE_URL || process.env.DATABASE_URL;
+const pool = new pg.Pool({ connectionString: authDatabaseUrl, connectionTimeoutMillis: 5000 });
 const auth = createAuth({
-  pool, secret: process.env.JWT_SECRET, challengeSecret: process.env.AUTH_CHALLENGE_SECRET || process.env.JWT_SECRET,
+  pool, sharedCatalogDatabase: authDatabaseUrl === process.env.DATABASE_URL,
+  secret: process.env.JWT_SECRET, challengeSecret: process.env.AUTH_CHALLENGE_SECRET || process.env.JWT_SECRET,
   siteOrigin: process.env.SPA_ORIGIN || 'http://localhost:5173', from: process.env.SMTP_FROM,
   mailer: nodemailer.createTransport({
     host: process.env.SMTP_HOST, port: Number(process.env.SMTP_PORT || 587), secure: process.env.SMTP_PORT === '465',

@@ -110,7 +110,12 @@ export function AuthPage({ initialMode = 'login' }) {
         setSuccessMsg('Yêu cầu gửi lại OTP đã được xử lý. Hãy kiểm tra cả thư rác.');
       } else if (mode === 'login') {
         const result = await login({ email: normalizedEmail, password, remember: rememberMe, captchaToken });
-        if (result.next === 'mfa') { setChallenge(result.challenge); setPassword(''); setOtp(''); setMode('mfa'); return; }
+        if (result.next === 'mfa') {
+          setChallenge(result.challenge);
+          setPassword(''); setOtp(''); setRecoveryCode(''); setUseRecovery(false);
+          setMode('mfa');
+          return;
+        }
         navigate(redirectPath, { replace: true });
       } else if (mode === 'mfa') {
         await finishMfa({ challenge, ...(useRecovery ? { recoveryCode } : { otp }), remember: rememberMe });
@@ -133,7 +138,10 @@ export function AuthPage({ initialMode = 'login' }) {
       }
     } catch (err) {
       setError(err.message || 'Có lỗi xảy ra. Vui lòng thử lại.');
-      if (err.code === 'INVALID_MFA_CHALLENGE') { setChallenge(null); setMode('login'); }
+      if (err.code === 'INVALID_MFA_CHALLENGE') {
+        setChallenge(null); setOtp(''); setRecoveryCode(''); setUseRecovery(false);
+        setMode('login');
+      }
       if (err.code === 'ACCOUNT_NOT_ACTIVATED') setMode('activate');
       if (err.captchaRequired || err.code === 'CAPTCHA_REQUIRED') setCaptchaRequired(true);
       if (err.retryAfter && mode === 'activate') setResendUntil(Date.now() + err.retryAfter * 1000);

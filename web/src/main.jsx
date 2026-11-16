@@ -1,4 +1,3 @@
-import { Security } from './pages/Security.jsx';
 import React, { useRef } from 'react';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter, Link, Navigate, Route, Routes, useLocation } from 'react-router-dom';
@@ -72,8 +71,8 @@ function App() {
         {['activate', 'forgot', 'reset'].map(mode => <Route key={mode} path={`/${mode}`} element={<AuthPage initialMode={mode}/>}/>)}
         <Route path="/dishes" element={<Catalog/>}/>
         <Route path="/dishes/:id" element={<PublicDetail resource="dishes"/>}/>
+        <Route path="/account/security" element={<Navigate to="/dishes" replace/>}/>
         <Route element={<ProtectedRoute/>}>
-        <Route path="/account/security" element={<Security/>}/>
         {['chefs', 'ingredients', 'restaurants'].map(resource => (
           <React.Fragment key={resource}>
             <Route path={`/${resource}/:id`} element={<PublicDetail key={resource} resource={resource}/>}/>

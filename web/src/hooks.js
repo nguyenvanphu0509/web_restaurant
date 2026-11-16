@@ -13,7 +13,9 @@ export function useLoad(key, load) {
     loader.current(controller.signal).then(result => {
       if (!controller.signal.aborted) setState({ key: identity, status: 'ok', result });
     }).catch(error => {
-      if (!controller.signal.aborted) setState({ key: identity, status: error.code === 'NOT_FOUND' ? 'notFound' : 'error', error });
+      if (controller.signal.aborted) return;
+      const status = error.code === 'FORBIDDEN' ? 'forbidden' : error.code === 'NOT_FOUND' ? 'notFound' : 'error';
+      setState({ key: identity, status, error });
     });
     return () => controller.abort();
   }, [identity]);

@@ -12,7 +12,9 @@ export function createApi(options) {
   const app = express();
   app.use(async (req, res, next) => { req.headers.authorization ||= `Bearer ${await token}`; next(); });
   const router = express.Router();
-  router.get('/me', jwt.requireAuth, (req, res) => res.json({ ok: true, data: { id: 1, name: 'E2E', email: 'e2e@example.test', role: 'viewer' } }));
-  app.use(createActualApi({ ...options, auth: { ...jwt, router } }));
+  const user = { id: 1, name: 'E2E', email: 'e2e@example.test', role: 'admin' };
+  const requireAuth = (req, res, next) => jwt.requireAuth(req, res, () => { req.user = user; next(); });
+  router.get('/me', requireAuth, (req, res) => res.json({ ok: true, data: user }));
+  app.use(createActualApi({ ...options, auth: { router, requireAuth, withUserLock: (req, work) => work(user) } }));
   return app;
 }

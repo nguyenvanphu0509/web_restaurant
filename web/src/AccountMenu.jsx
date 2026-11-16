@@ -1,17 +1,22 @@
 import { useEffect, useId, useRef, useState } from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import { useLocation } from 'react-router-dom';
 import { useAuth } from './AuthContext.jsx';
+import { SecurityDialog } from './pages/Security.jsx';
 
 export function AccountMenu() {
   const { user, logout } = useAuth();
   const [open, setOpen] = useState(false);
+  const [securityOpen, setSecurityOpen] = useState(false);
   const root = useRef(null), trigger = useRef(null), panelId = useId();
   const location = useLocation();
   const name = user?.name?.trim() || user?.username?.trim() || user?.email?.split('@')[0] || 'Bạn';
   const initial = Array.from(name)[0].toLocaleUpperCase('vi-VN');
   const role = { admin: 'Quản trị viên', editor: 'Biên tập viên', viewer: 'Thành viên' }[user?.role] || 'Thành viên';
 
-  useEffect(() => setOpen(false), [location.key]);
+  useEffect(() => {
+    setOpen(false);
+    setSecurityOpen(false);
+  }, [location.key]);
   useEffect(() => {
     if (!open) return;
     const outside = event => { if (!root.current?.contains(event.target)) setOpen(false); };
@@ -23,7 +28,7 @@ export function AccountMenu() {
     return () => { document.removeEventListener('pointerdown', outside); document.removeEventListener('keydown', escape); };
   }, [open]);
 
-  return <div className="account-menu" ref={root} onBlur={event => {
+  return <><div className="account-menu" ref={root} onBlur={event => {
     if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false);
   }}>
     <button ref={trigger} type="button" className="account-avatar" aria-label={`Tài khoản của ${name}`} aria-expanded={open} aria-controls={panelId} onClick={() => setOpen(value => !value)}>
@@ -32,11 +37,19 @@ export function AccountMenu() {
     {open && <section id={panelId} className="account-panel" aria-label="Thông tin tài khoản">
       <div className="account-panel-heading"><span className="account-panel-avatar" aria-hidden="true">{initial}</span><div><p className="account-name">{name}</p><span className="account-role">{role}</span></div></div>
       <p className="account-email">{user?.email}</p>
-      <Link to="/account/security" className="account-security-link">Bảo mật tài khoản</Link>
+      <button type="button" className="account-security-link" aria-haspopup="dialog" onClick={() => {
+        setOpen(false);
+        trigger.current?.focus();
+        setSecurityOpen(true);
+      }}>
+        Bảo vệ mật khẩu <span aria-hidden="true">›</span>
+      </button>
       <button type="button" className="account-logout" onClick={logout}>
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><path d="M10 17v3H4V4h6v3M9 12h12m-4-4 4 4-4 4"/></svg>
         Đăng xuất
       </button>
     </section>}
-  </div>;
+  </div>
+  {securityOpen && <SecurityDialog onDismiss={() => setSecurityOpen(false)}/>}
+  </>;
 }

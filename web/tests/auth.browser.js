@@ -45,7 +45,7 @@ try {
       assert.equal(data.captcha, 'mock-captcha-token');
     }
     if (path === '/api/auth/me') body.data = { id: 1, email: 'user@example.com', role: 'viewer' };
-    if (path === '/api/dishes') {
+    if (path === '/api/admin/dishes') {
       assert.ok(request.headers().authorization?.startsWith('Bearer '));
       status = 403; body = { ok: false, error: { code: 'FORBIDDEN', message: 'Bạn không có quyền thực hiện thao tác này.' } };
     }

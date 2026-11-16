@@ -15,7 +15,10 @@ async function setup(options = {}) {
   await pool.query(await readFile(new URL('../api/migrations/001-auth.sql', import.meta.url), 'utf8'));
   const messages = [];
   const auth = createAuth({ pool, secret, logger, recaptchaVerifier: async value => value === 'captcha', mailer: { sendMail: async message => { messages.push(message); return { accepted: [message.to] }; } }, ...options });
-  return { pool, auth, messages, app: createApi({ db: createFixture().db, auth, logger }) };
+  const { db, storage } = createFixture();
+  let uploads = 0;
+  const app = createApi({ db, auth, logger, storage: { upload: async () => { uploads++; return '/images/greens.svg'; } } });
+  return { pool, auth, messages, app, storage, uploads: () => uploads };
 }
 const payload = { email: 'new@example.com', name: 'New user', password: 'valid-long-password-123', confirmPassword: 'valid-long-password-123', captcha: 'captcha' };
 async function registered(ctx) {
@@ -33,7 +36,7 @@ async function errorCode(app, path, data, code, status = 200) {
   const result = await request(app).post(`/api/auth/${path}`).send(data).expect(status);
   assert.equal(result.body.ok, false); assert.equal(result.body.error.code, code); assert.equal(result.body.data?.accessToken, undefined);
 }
-test('anonymous registration/activation/login, active Viewer CRUD and reset', async () => {
+test('anonymous registration/activation/login, Viewer read-only access and reset', async () => {
   const ctx = await setup(), { app, pool, auth, messages } = ctx;
   try {
     await errorCode(app, 'register', { ...payload, confirmPassword: 'mismatch' }, 'VALIDATION_FAILED');
@@ -46,7 +49,8 @@ test('anonymous registration/activation/login, active Viewer CRUD and reset', as
     await errorCode(app, 'activate', { email: payload.email, otp }, 'INVALID_OTP');
     const token = (await request(app).post('/api/auth/login').send(payload)).body.data.accessToken;
     assert.equal((await auth.jwt.verify(token)).role, 'viewer');
-    await request(app).patch('/api/dishes/1').set('Authorization', `Bearer ${token}`).send({ name: 'Viewer may edit', role: 'admin' }).expect(200);
+    const denied = await request(app).patch('/api/dishes/1').set('Authorization', `Bearer ${token}`).send({ name: 'Denied', role: 'admin' }).expect(403);
+    assert.equal(denied.body.error.code, 'FORBIDDEN');
     await request(app).get('/api/dishes?q=pho&page=1').expect(200);
     await request(app).post('/api/dishes').send({}).expect(401);
     const known = await request(app).post('/api/auth/forgot').send({ email: payload.email });
@@ -123,30 +127,92 @@ test('public dishes, protected other resources and authorization preflight', asy
   const ctx = await setup();
   try {
     await request(ctx.app).get('/api/dishes').expect(200); await request(ctx.app).get('/api/dishes/1').expect(200);
+    for (const path of ['dishes', 'dishes/1', 'dishes/new', 'dishes/1/edit', 'dishes/1/delete']) await request(ctx.app).get(`/api/admin/${path}`).expect(401);
     for (const path of ['chefs', 'ingredients', 'restaurants']) await request(ctx.app).get(`/api/${path}`).expect(401);
     for (const method of ['post', 'patch', 'delete']) await request(ctx.app)[method](method === 'post' ? '/api/dishes' : '/api/dishes/1').send({}).expect(401);
     await request(ctx.app).options('/api/dishes/1').set('Origin', 'http://localhost:5173').set('Access-Control-Request-Method', 'PATCH').set('Access-Control-Request-Headers', 'content-type,authorization').expect(204);
   } finally { await ctx.pool.end(); }
 });
-test('expired OTP cannot activate; all active roles have the same CRUD access', async () => {
+test('expired OTP cannot activate', async () => {
   const ctx = await setup();
   try {
     const otp = await registered(ctx);
     await ctx.pool.query("UPDATE block8_auth.activation SET expires_at=now()-interval '1 minute'");
     await errorCode(ctx.app, 'activate', { email: payload.email, otp }, 'INVALID_OTP');
     assert.equal((await ctx.pool.query('SELECT status FROM block8_auth.users')).rows[0].status, 'pending');
-    await ctx.pool.query("UPDATE block8_auth.users SET status='active',email_verified_at=now()");
-    for (const role of ['viewer', 'editor', 'admin']) {
-      await ctx.pool.query('UPDATE block8_auth.users SET role=$1', [role]);
-      const token = (await request(ctx.app).post('/api/auth/login').send(payload)).body.data.accessToken;
-      const created = await request(ctx.app).post('/api/chefs').set('Authorization', `Bearer ${token}`).send({ name: `Chef ${role}` }).expect(200);
-      await request(ctx.app).patch(`/api/chefs/${created.body.data.id}`).set('Authorization', `Bearer ${token}`).send({ name: 'Updated' }).expect(200);
-      await request(ctx.app).delete(`/api/chefs/${created.body.data.id}`).set('Authorization', `Bearer ${token}`).expect(200);
-    }
   } finally { await ctx.pool.end(); }
 });
 test('unknown email using the timing-dummy password still returns INVALID_CREDENTIALS', async () => {
   const ctx = await setup();
   try { await errorCode(ctx.app, 'login', { email: 'absent@example.test', password: 'dummy-password-for-timing' }, 'INVALID_CREDENTIALS'); }
   finally { await ctx.pool.end(); }
+});
+
+test('CSR admin guards forms and writes using current roles and dish attributes', async () => {
+  const ctx = await setup();
+  const { app, pool, auth, storage } = ctx;
+  async function addUser(name, role, chefId = null) {
+    const { rows: [user] } = await pool.query(
+      "INSERT INTO block8_auth.users(email,password_hash,role,status,email_verified_at,chef_id) VALUES($1,'test-only',$2,'active',now(),$3) RETURNING id,role",
+      [name + '@example.test', role, chefId],
+    );
+    const token = await auth.jwt.sign(user);
+    return (method, path) => request(app)[method](path).auth(token, { type: 'bearer' });
+  }
+  try {
+    const [chefA, chefB] = storage.chef;
+    const viewer = await addUser('viewer', 'viewer');
+    const editorA = await addUser('editor-a', 'editor', chefA.id);
+    const editorB = await addUser('editor-b', 'editor', chefB.id);
+    const unassigned = await addUser('unassigned', 'editor');
+    const admin = await addUser('admin', 'admin');
+    const list = (await viewer('get', '/api/admin/dishes').expect(200)).body;
+    assert.equal(list.meta.permissions.create, false);
+    assert.ok(list.data.items.length && list.data.items.every(row => !row.permissions.update && !row.permissions.delete));
+    await viewer('get', '/api/admin/dishes/new').expect(403);
+    await unassigned('get', '/api/admin/dishes/new').expect(403);
+    await unassigned('post', '/api/dishes').send({ name: 'No chef', price: 1000 }).expect(403);
+
+    const chefCount = storage.chef.length;
+    const created = (await editorA('post', '/api/dishes')
+      .send({ name: 'Draft', price: 1000, chefId: chefB.id, status: 'published', newChefName: 'Ignored' }).expect(200)).body.data;
+    const path = '/api/dishes/' + created.id;
+    const adminPath = '/api/admin/dishes/' + created.id;
+    assert.equal(created.chefId, chefA.id);
+    assert.equal(created.status, 'draft');
+    assert.equal(storage.chef.length, chefCount);
+    await viewer('get', adminPath).expect(200);
+    await viewer('get', adminPath + '/edit').expect(403);
+    await editorB('get', adminPath + '/edit').expect(403);
+    await editorB('patch', path).field('payload', JSON.stringify({ name: 'Denied' }))
+      .attach('imageFile', Buffer.from('fixture'), { filename: 'test.png', contentType: 'image/png' }).expect(403);
+    assert.equal(ctx.uploads(), 0);
+    await editorA('get', adminPath + '/delete').expect(403);
+    await editorA('delete', path).expect(403);
+    const editForm = (await editorA('get', adminPath + '/edit').expect(200)).body;
+    assert.equal(editForm.meta.manageDishFields, false);
+    const updated = (await editorA('patch', path).send({ name: 'Edited', chefId: chefB.id, status: 'published', newChefName: 'Ignored' })).body.data;
+    assert.equal(updated.chefId, chefA.id);
+    assert.equal(updated.status, 'draft');
+    const invalid = (await admin('patch', path).send({ status: 'archived' })).body;
+    assert.equal(invalid.error.code, 'VALIDATION_FAILED');
+
+    await admin('patch', path).send({ chefId: chefB.id }).expect(200);
+    await editorA('patch', path).send({ name: 'Denied after reassignment' }).expect(403);
+    await editorB('get', adminPath + '/edit').expect(200);
+    await admin('patch', path).send({ status: 'published' }).expect(200);
+    await editorB('patch', path).send({ name: 'Denied after publishing' }).expect(403);
+    const saved = (await request(app).get(path)).body.data;
+    assert.equal(saved.name, 'Edited');
+    assert.equal(saved.chefId, chefB.id);
+    assert.equal(saved.status, 'published');
+
+    const chef = (await editorA('post', '/api/chefs').send({ name: 'Editor can create' })).body.data;
+    await editorA('get', '/api/admin/chefs/' + chef.id + '/edit').expect(200);
+    await pool.query("UPDATE block8_auth.users SET role='viewer' WHERE email='editor-a@example.test'");
+    await editorA('patch', '/api/chefs/' + chef.id).send({ name: 'Denied after demotion' }).expect(403);
+    await admin('get', adminPath + '/delete').expect(200);
+    await admin('delete', path).expect(200);
+    assert.equal(storage.dish.some(row => row.id === created.id), false);
+  } finally { await pool.end(); }
 });

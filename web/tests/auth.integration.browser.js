@@ -72,9 +72,8 @@ try {
   await page.setViewportSize({ width: 1280, height: 900 });
 
   await page.goto('http://localhost:5179/admin/dishes/1/edit');
-  await page.locator('#name').fill('Viewer may update');
-  await page.getByRole('button', { name: /Lưu thay đổi/ }).click();
-  await page.getByRole('heading', { name: 'Viewer may update', exact: true }).waitFor();
+  await page.getByRole('heading', { name: /403.*Không có quyền/ }).waitFor();
+  assert.equal(await page.locator('#name').count(), 0);
   // Crypto verify is DB-free; /me loads the account and reports DB outages as technical errors.
   const query = pool.query.bind(pool), connect = pool.connect.bind(pool);
   let calls = 0;
@@ -105,7 +104,7 @@ try {
   await page.waitForURL('**/dishes');
   await page.locator('.dish-card').first().waitFor();
   assert.deepEqual(errors, []);
-  console.log('SPA/API integration passed: signup, CAPTCHA, OTP, real login/token, public catalog, active Viewer CRUD, zero-DB crypto verification, forgot/reset, new password login.');
+  console.log('SPA/API integration passed: signup, CAPTCHA, OTP, real login/token, public catalog, read-only Viewer, zero-DB crypto verification, forgot/reset, new password login.');
 } finally {
   await browser?.close(); await auth.drainMail();
   await new Promise(resolve => server.close(resolve)); await pool.end();
